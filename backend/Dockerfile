@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip \
       torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir \
       "nemo_toolkit[asr]>=2.0.0" \
-      "pyannote.audio>=3.3.0"
+      "pyannote.audio>=3.3.0,<4.0"
 
 # ── Stage 2: App code (fast, changes often) ──
 FROM ${GPU_BASE} AS app
