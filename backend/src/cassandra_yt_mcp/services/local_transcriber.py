@@ -68,6 +68,7 @@ class LocalTranscriber:
                 self_attention_model="rel_pos_local_attn",
                 att_context_size=[256, 256],
             )
+            model.change_subsampling_conv_chunking_factor(1)  # auto-chunk conv to reduce VRAM
             model.eval()
             self._asr_model = model
 
