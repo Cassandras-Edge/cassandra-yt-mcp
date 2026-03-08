@@ -1,4 +1,4 @@
-# ── Stage 1: GPU/ML dependencies (cached, rarely changes) ──
+# ── Stage 1: GPU/ML dependencies (cached as separate image in local registry) ──
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS gpu-base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -14,7 +14,6 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# PyTorch + NeMo + pyannote — the slow part (~3GB, only re-runs when these change)
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
       torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
@@ -48,7 +47,6 @@ COPY src ./src
 
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# Only installs the lightweight app deps (fastapi, httpx, etc.)
 RUN pip install --no-cache-dir "."
 
 RUN mkdir -p /data && chown -R app:app /app /data

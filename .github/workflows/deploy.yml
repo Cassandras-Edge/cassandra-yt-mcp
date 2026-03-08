@@ -14,12 +14,27 @@ permissions:
 env:
   REGISTRY: 172.20.0.161:30500
   IMAGE_NAME: cassandra-yt-mcp/backend
+  GPU_BASE_TAG: cassandra-yt-mcp/gpu-base:cu128
 
 jobs:
   build-and-push:
     runs-on: gh-arc-cassandra-yt-mcp
     steps:
       - uses: actions/checkout@v4
+
+      - name: Pull cached gpu-base image
+        run: docker pull ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} || true
+
+      - name: Build gpu-base stage
+        run: |
+          docker build \
+            --target gpu-base \
+            --cache-from ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \
+            backend/
+
+      - name: Push gpu-base cache image
+        run: docker push ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }}
 
       - name: Extract metadata
         id: meta
@@ -30,12 +45,16 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: backend/
-          push: true
-          build-args: |
-            YTDLP_CHANNEL=nightly
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Build final image
+        run: |
+          docker build \
+            --cache-from ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \
+            $(echo "${{ steps.meta.outputs.tags }}" | sed 's/^/-t /') \
+            --build-arg YTDLP_CHANNEL=nightly \
+            backend/
+
+      - name: Push final image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            docker push "$tag"
+          done
