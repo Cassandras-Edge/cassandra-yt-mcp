@@ -96,10 +96,15 @@ class LocalTranscriber:
         return mono_path
 
     def transcribe(self, audio_path: Path) -> TranscriptResult:
+        import torch  # noqa: PLC0415
+
         self._load_models()
         mono_path = self._ensure_mono(audio_path)
         audio_str = str(mono_path)
-        hypothesis = self._asr_model.transcribe([audio_str], timestamps=True)[0]  # type: ignore[union-attr]
+        with torch.amp.autocast("cuda"):
+            hypothesis = self._asr_model.transcribe(  # type: ignore[union-attr]
+                [audio_str], timestamps=True, batch_size=1,
+            )[0]
         text = str(hypothesis.text).strip()
         detected_lang = self._detect_language(hypothesis, text)
         if detected_lang and detected_lang not in SUPPORTED_LANGUAGES:
