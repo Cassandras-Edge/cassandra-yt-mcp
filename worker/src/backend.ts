@@ -51,8 +51,7 @@ async function fetchBackendJson(env: Env, url: URL, init: RequestInit): Promise<
 
 export function jsonToolResponse(payload: Record<string, unknown>) {
   return {
-    structuredContent: payload,
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
   };
 }
 
