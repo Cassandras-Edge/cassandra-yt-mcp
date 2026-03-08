@@ -41,6 +41,8 @@ SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
 _EUROPEAN_SCRIPTS: frozenset[str] = frozenset({"LATIN", "CYRILLIC", "GREEK"})
 _PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 _PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
+_CHUNK_SECONDS = 600  # 10-min chunks for ASR to avoid VRAM OOM
+_OVERLAP_SECONDS = 5  # overlap between chunks for continuity
 
 
 class LocalTranscriber:
@@ -109,28 +111,97 @@ class LocalTranscriber:
 
     def transcribe(self, audio_path: Path) -> TranscriptResult:
         import torch  # noqa: PLC0415
+        import torchaudio  # noqa: PLC0415
 
         self._load_models()
         mono_path = self._ensure_mono(audio_path)
         audio_str = str(mono_path)
-        with torch.amp.autocast("cuda"):
-            hypothesis = self._asr_model.transcribe(  # type: ignore[union-attr]
-                [audio_str], timestamps=True, batch_size=1,
-            )[0]
-        text = str(hypothesis.text).strip()
-        detected_lang = self._detect_language(hypothesis, text)
+
+        waveform, sr = torchaudio.load(str(mono_path))
+        duration_secs = waveform.shape[1] / sr
+
+        if duration_secs <= _CHUNK_SECONDS + _OVERLAP_SECONDS:
+            hypotheses = [self._transcribe_file(audio_str)]
+        else:
+            hypotheses = self._transcribe_chunked(waveform, sr, mono_path)
+
+        # Merge all hypotheses
+        all_text_parts: list[str] = []
+        all_raw_segments: list[dict[str, object]] = []
+        detected_lang: str | None = None
+        for hyp in hypotheses:
+            t = str(hyp.text).strip()
+            if t:
+                all_text_parts.append(t)
+            if not detected_lang:
+                detected_lang = self._detect_language(hyp, t)
+            raw = hyp.timestamp.get("segment", []) if hyp.timestamp else []
+            all_raw_segments.extend(raw)
+
+        text = " ".join(all_text_parts)
         if detected_lang and detected_lang not in SUPPORTED_LANGUAGES:
             raise UnsupportedLanguageError(detected_lang)
         if not detected_lang and not self._text_uses_european_scripts(text):
             raise UnsupportedLanguageError("unknown")
+
         diarization = self._diarization_pipeline(audio_str)  # type: ignore[operator]
         speaker_turns = self._extract_speaker_turns(diarization)
-        raw_segments = hypothesis.timestamp.get("segment", []) if hypothesis.timestamp else []
         return TranscriptResult(
             text=text,
-            segments=self._align_segments(raw_segments, speaker_turns),
+            segments=self._align_segments(all_raw_segments, speaker_turns),
             language=detected_lang or "en",
         )
+
+    def _transcribe_file(self, audio_path: str) -> object:
+        import torch  # noqa: PLC0415
+
+        with torch.amp.autocast("cuda"):
+            return self._asr_model.transcribe(  # type: ignore[union-attr]
+                [audio_path], timestamps=True, batch_size=1,
+            )[0]
+
+    def _transcribe_chunked(
+        self, waveform: object, sr: int, mono_path: Path,
+    ) -> list[object]:
+        import torch  # noqa: PLC0415
+        import torchaudio  # noqa: PLC0415
+
+        chunk_samples = _CHUNK_SECONDS * sr
+        overlap_samples = _OVERLAP_SECONDS * sr
+        stride = chunk_samples - overlap_samples
+        total_samples = waveform.shape[1]  # type: ignore[union-attr]
+        hypotheses: list[object] = []
+
+        chunk_idx = 0
+        offset = 0
+        while offset < total_samples:
+            end = min(offset + chunk_samples, total_samples)
+            chunk = waveform[:, offset:end]  # type: ignore[index]
+            chunk_path = mono_path.with_suffix(f".chunk{chunk_idx}.wav")
+            torchaudio.save(str(chunk_path), chunk, sr)
+            chunk_offset_secs = offset / sr
+
+            logger.info(
+                "Transcribing chunk %d (%.1fs – %.1fs)",
+                chunk_idx, chunk_offset_secs, end / sr,
+            )
+            hyp = self._transcribe_file(str(chunk_path))
+
+            # Shift timestamps to absolute positions
+            if hyp.timestamp:
+                for seg in hyp.timestamp.get("segment", []):
+                    seg["start"] = float(seg.get("start", 0.0)) + chunk_offset_secs
+                    seg["end"] = float(seg.get("end", 0.0)) + chunk_offset_secs
+
+            hypotheses.append(hyp)
+            torch.cuda.empty_cache()
+
+            # Clean up chunk file
+            chunk_path.unlink(missing_ok=True)
+            chunk_idx += 1
+            offset += stride
+
+        return hypotheses
 
     @staticmethod
     def _detect_language(hypothesis: object, text: str) -> str | None:

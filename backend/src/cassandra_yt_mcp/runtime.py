@@ -82,6 +82,14 @@ class BackgroundWorker:
         except Exception as exc:  # noqa: BLE001
             logger.exception("Job %s failed", job_id)
             self.jobs.mark_failed(job_id, str(exc).strip() or "Unknown worker error", attempt)
+            # Clear CUDA cache after failures to prevent corrupted allocator state
+            try:
+                import torch  # noqa: PLC0415
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001
+                pass
         finally:
             self._active_count -= 1
 
