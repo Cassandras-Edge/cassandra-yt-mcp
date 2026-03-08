@@ -22,10 +22,12 @@ export async function fetchWorkOSAuthToken({
   client_id,
   client_secret,
   code,
+  redirect_uri,
 }: {
   code: string | undefined;
   client_secret: string;
   client_id: string;
+  redirect_uri?: string;
 }): Promise<[WorkOSAuthResult, null] | [null, Response]> {
   if (!code) {
     return [null, new Response("Missing code", { status: 400 })];
@@ -43,6 +45,8 @@ export async function fetchWorkOSAuthToken({
   });
 
   if (!resp.ok) {
+    const errText = await resp.text();
+    console.error("WorkOS token exchange failed:", errText);
     return [null, new Response("Failed to exchange code for token", { status: 500 })];
   }
 

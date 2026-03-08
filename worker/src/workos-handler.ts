@@ -3,14 +3,9 @@ import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provid
 import { Hono } from "hono";
 import { fetchWorkOSAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 import {
-  addApprovedClient,
   bindStateToSession,
   createOAuthState,
-  generateCSRFProtection,
-  isClientApproved,
   OAuthError,
-  renderApprovalDialog,
-  validateCSRFToken,
   validateOAuthState,
 } from "./workers-oauth-utils";
 
@@ -23,56 +18,12 @@ app.get("/authorize", async (c) => {
     return c.text("Invalid request", 400);
   }
 
-  if (await isClientApproved(c.req.raw, clientId, env.COOKIE_ENCRYPTION_KEY)) {
-    const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
-    const { setCookie } = await bindStateToSession(stateToken);
-    const headers = new Headers();
-    headers.append("Set-Cookie", setCookie);
-    return redirectToWorkOS(c.req.raw, stateToken, headers);
-  }
-
-  const { token, setCookie } = generateCSRFProtection();
-  return renderApprovalDialog(c.req.raw, {
-    client: await c.env.OAUTH_PROVIDER.lookupClient(clientId),
-    csrfToken: token,
-    setCookie,
-    server: {
-      name: "Cassandra YT MCP",
-      description: "YouTube transcription and discovery tools for Cassandra.",
-    },
-    state: { oauthReqInfo },
-  });
-});
-
-app.post("/authorize", async (c) => {
-  try {
-    const formData = await c.req.raw.formData();
-    validateCSRFToken(formData, c.req.raw);
-    const encodedState = formData.get("state");
-    if (!encodedState || typeof encodedState !== "string") {
-      return c.text("Missing state in form data", 400);
-    }
-    const state = JSON.parse(atob(encodedState)) as { oauthReqInfo?: AuthRequest };
-    if (!state.oauthReqInfo || !state.oauthReqInfo.clientId) {
-      return c.text("Invalid request", 400);
-    }
-    const approvedClientCookie = await addApprovedClient(
-      c.req.raw,
-      state.oauthReqInfo.clientId,
-      c.env.COOKIE_ENCRYPTION_KEY,
-    );
-    const { stateToken } = await createOAuthState(state.oauthReqInfo, c.env.OAUTH_KV);
-    const { setCookie: sessionBindingCookie } = await bindStateToSession(stateToken);
-    const headers = new Headers();
-    headers.append("Set-Cookie", approvedClientCookie);
-    headers.append("Set-Cookie", sessionBindingCookie);
-    return redirectToWorkOS(c.req.raw, stateToken, headers);
-  } catch (error) {
-    if (error instanceof OAuthError) {
-      return error.toResponse();
-    }
-    return c.text(`Internal server error: ${(error as Error).message}`, 500);
-  }
+  // Auto-approve all clients — skip consent screen, go straight to WorkOS
+  const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
+  const { setCookie } = await bindStateToSession(stateToken);
+  const headers = new Headers();
+  headers.append("Set-Cookie", setCookie);
+  return redirectToWorkOS(c.req.raw, stateToken, headers);
 });
 
 app.get("/callback", async (c) => {
@@ -97,6 +48,7 @@ app.get("/callback", async (c) => {
     client_id: c.env.WORKOS_CLIENT_ID,
     client_secret: c.env.WORKOS_CLIENT_SECRET,
     code: c.req.query("code"),
+    redirect_uri: new URL("/callback", c.req.url).href,
   });
   if (errResponse) return errResponse;
 

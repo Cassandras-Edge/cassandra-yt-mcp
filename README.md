@@ -37,11 +37,46 @@ cassandra-yt-mcp/
 
 ## Image Publishing
 
-The backend image is published to GHCR from the `Deploy` workflow as:
+The backend image is built by ARC runners and pushed to the local registry:
 
-- `ghcr.io/digibugcat/cassandra-yt-mcp/backend:latest`
-- `ghcr.io/digibugcat/cassandra-yt-mcp/backend:<git-sha>`
+- `172.20.0.161:30500/cassandra-yt-mcp/backend:latest`
 
-The backend Docker image installs Python packages into `/opt/venv` so it can build cleanly on Ubuntu-based CUDA images without tripping Debian's externally managed Python guardrails.
+ArgoCD Image Updater detects new tags and auto-syncs deployments.
 
-If the GHCR package remains private, set `image.pullSecrets` in the Helm values and create the matching Kubernetes registry secret in the `cassandra-yt-mcp` namespace.
+## Secrets
+
+All secrets are managed manually — none are stored in git.
+
+### Kubernetes (namespace: `cassandra-yt-mcp`)
+
+```bash
+# Backend API token — authenticates Worker -> Backend requests
+kubectl create secret generic cassandra-yt-mcp-backend \
+  --namespace cassandra-yt-mcp \
+  --from-literal=BACKEND_API_TOKEN=<token> \
+  --from-literal=ASSEMBLYAI_API_KEY=<key>       # optional fallback transcriber \
+  --from-literal=HUGGINGFACE_TOKEN=<token>       # optional model access
+
+# Cloudflare tunnel connector token
+kubectl create secret generic cloudflare-tunnel \
+  --namespace cassandra-yt-mcp \
+  --from-literal=token=<tunnel-token>
+# Get token from: cd cassandra-infra/environments/production/yt-mcp && tofu output -raw tunnel_token
+```
+
+### Cloudflare Worker (`wrangler secret put`)
+
+```bash
+cd worker/
+wrangler secret put WORKOS_CLIENT_ID          # from WorkOS dashboard
+wrangler secret put WORKOS_CLIENT_SECRET      # from WorkOS dashboard
+wrangler secret put COOKIE_ENCRYPTION_KEY     # openssl rand -hex 32
+wrangler secret put BACKEND_BASE_URL          # https://yt-mcp-api.REDACTED_DOMAIN
+wrangler secret put BACKEND_API_TOKEN         # must match k8s secret above
+wrangler secret put CF_ACCESS_CLIENT_ID       # from tofu output cf_access_client_id
+wrangler secret put CF_ACCESS_CLIENT_SECRET   # from tofu output -raw cf_access_client_secret
+```
+
+### WorkOS
+
+Add `https://yt-mcp.REDACTED_DOMAIN/callback` as an allowed redirect URI.

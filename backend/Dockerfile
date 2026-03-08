@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
 
 ARG YTDLP_CHANNEL=nightly
 ARG DEBIAN_FRONTEND=noninteractive
@@ -36,7 +36,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
-      torch torchaudio --index-url https://download.pytorch.org/whl/cu126 \
+      torch torchaudio --index-url https://download.pytorch.org/whl/cu128 \
  && pip install --no-cache-dir ".[gpu]"
 
 RUN mkdir -p /data && chown -R app:app /app /data
