@@ -71,7 +71,7 @@ cd worker/
 wrangler secret put WORKOS_CLIENT_ID          # from WorkOS dashboard
 wrangler secret put WORKOS_CLIENT_SECRET      # from WorkOS dashboard
 wrangler secret put COOKIE_ENCRYPTION_KEY     # openssl rand -hex 32
-wrangler secret put BACKEND_BASE_URL          # https://yt-mcp-api.REDACTED_DOMAIN
+wrangler secret put BACKEND_BASE_URL          # your backend URL
 wrangler secret put BACKEND_API_TOKEN         # must match k8s secret above
 wrangler secret put CF_ACCESS_CLIENT_ID       # from tofu output cf_access_client_id
 wrangler secret put CF_ACCESS_CLIENT_SECRET   # from tofu output -raw cf_access_client_secret
@@ -79,4 +79,4 @@ wrangler secret put CF_ACCESS_CLIENT_SECRET   # from tofu output -raw cf_access_
 
 ### WorkOS
 
-Add `https://yt-mcp.REDACTED_DOMAIN/callback` as an allowed redirect URI.
+Add `https://<your-worker-subdomain>.<your-domain>/callback` as an allowed redirect URI.

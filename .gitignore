@@ -10,3 +10,4 @@ build/
 .terraform/
 *.tfstate*
 node_modules/
+worker/wrangler.jsonc
