@@ -22,7 +22,11 @@ RUN pip install --no-cache-dir --upgrade pip \
       "pyannote.audio>=3.3.0"
 
 # ── Stage 2: App code (fast, changes often) ──
-FROM gpu-base AS app
+# GPU_BASE is overridden by CI to use the pre-built registry image directly,
+# skipping the gpu-base stage entirely. For local builds, falls back to the
+# gpu-base stage above.
+ARG GPU_BASE=gpu-base
+FROM ${GPU_BASE} AS app
 
 ARG YTDLP_CHANNEL=nightly
 
