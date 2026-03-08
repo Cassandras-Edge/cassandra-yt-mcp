@@ -42,7 +42,7 @@ _EUROPEAN_SCRIPTS: frozenset[str] = frozenset({"LATIN", "CYRILLIC", "GREEK"})
 _PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 _PYANNOTE_PIPELINE = "pyannote/speaker-diarization-3.1"
 _CHUNK_SECONDS = 600  # 10-min chunks for ASR to avoid VRAM OOM
-_OVERLAP_SECONDS = 5  # overlap between chunks for continuity
+_OVERLAP_SECONDS = 30  # 30s overlap for reliable LCS merge at boundaries
 
 
 class LocalTranscriber:
@@ -122,24 +122,13 @@ class LocalTranscriber:
         duration_secs = waveform.shape[1] / sr
 
         if duration_secs <= _CHUNK_SECONDS + _OVERLAP_SECONDS:
-            hypotheses = [self._transcribe_file(audio_str)]
+            hypothesis = self._transcribe_file(audio_str)
+            text = str(hypothesis.text).strip()
+            detected_lang = self._detect_language(hypothesis, text)
+            raw_segments = hypothesis.timestamp.get("segment", []) if hypothesis.timestamp else []
         else:
-            hypotheses = self._transcribe_chunked(waveform, sr, mono_path)
+            text, raw_segments, detected_lang = self._transcribe_chunked(waveform, sr, mono_path)
 
-        # Merge all hypotheses
-        all_text_parts: list[str] = []
-        all_raw_segments: list[dict[str, object]] = []
-        detected_lang: str | None = None
-        for hyp in hypotheses:
-            t = str(hyp.text).strip()
-            if t:
-                all_text_parts.append(t)
-            if not detected_lang:
-                detected_lang = self._detect_language(hyp, t)
-            raw = hyp.timestamp.get("segment", []) if hyp.timestamp else []
-            all_raw_segments.extend(raw)
-
-        text = " ".join(all_text_parts)
         if detected_lang and detected_lang not in SUPPORTED_LANGUAGES:
             raise UnsupportedLanguageError(detected_lang)
         if not detected_lang and not self._text_uses_european_scripts(text):
@@ -149,7 +138,7 @@ class LocalTranscriber:
         speaker_turns = self._extract_speaker_turns(diarization)
         return TranscriptResult(
             text=text,
-            segments=self._align_segments(all_raw_segments, speaker_turns),
+            segments=self._align_segments(raw_segments, speaker_turns),
             language=detected_lang or "en",
         )
 
@@ -163,7 +152,7 @@ class LocalTranscriber:
 
     def _transcribe_chunked(
         self, waveform: object, sr: int, mono_path: Path,
-    ) -> list[object]:
+    ) -> tuple[str, list[dict[str, object]], str | None]:
         import torch  # noqa: PLC0415
         import torchaudio  # noqa: PLC0415
 
@@ -171,10 +160,12 @@ class LocalTranscriber:
         overlap_samples = _OVERLAP_SECONDS * sr
         stride = chunk_samples - overlap_samples
         total_samples = waveform.shape[1]  # type: ignore[union-attr]
-        hypotheses: list[object] = []
 
+        merged_segments: list[dict[str, object]] = []
+        detected_lang: str | None = None
         chunk_idx = 0
         offset = 0
+
         while offset < total_samples:
             end = min(offset + chunk_samples, total_samples)
             chunk = waveform[:, offset:end]  # type: ignore[index]
@@ -189,20 +180,31 @@ class LocalTranscriber:
             hyp = self._transcribe_file(str(chunk_path))
 
             # Shift timestamps to absolute positions
-            if hyp.timestamp:
-                for seg in hyp.timestamp.get("segment", []):
-                    seg["start"] = float(seg.get("start", 0.0)) + chunk_offset_secs
-                    seg["end"] = float(seg.get("end", 0.0)) + chunk_offset_secs
+            chunk_segments: list[dict[str, object]] = []
+            for seg in (hyp.timestamp.get("segment", []) if hyp.timestamp else []):
+                seg["start"] = float(seg.get("start", 0.0)) + chunk_offset_secs
+                seg["end"] = float(seg.get("end", 0.0)) + chunk_offset_secs
+                chunk_segments.append(seg)
 
-            hypotheses.append(hyp)
+            if not detected_lang:
+                detected_lang = self._detect_language(hyp, str(hyp.text).strip())
+
+            # Merge with previous segments using LCS in the overlap region
+            merged_segments = _merge_segments_lcs(
+                merged_segments, chunk_segments, _OVERLAP_SECONDS,
+            )
+
             torch.cuda.empty_cache()
-
-            # Clean up chunk file
             chunk_path.unlink(missing_ok=True)
             chunk_idx += 1
             offset += stride
 
-        return hypotheses
+        text = " ".join(
+            str(s.get("segment") or s.get("text") or "").strip()
+            for s in merged_segments
+            if str(s.get("segment") or s.get("text") or "").strip()
+        )
+        return text, merged_segments, detected_lang
 
     @staticmethod
     def _detect_language(hypothesis: object, text: str) -> str | None:
@@ -254,6 +256,93 @@ class LocalTranscriber:
                 )
             )
         return segments
+
+
+def _seg_text(seg: dict[str, object]) -> str:
+    return str(seg.get("segment") or seg.get("text") or "").strip().lower()
+
+
+def _merge_segments_lcs(
+    a: list[dict[str, object]],
+    b: list[dict[str, object]],
+    overlap_secs: float,
+) -> list[dict[str, object]]:
+    """Merge two segment lists using LCS in the overlap region.
+
+    Adapted from parakeet-mlx's merge_longest_common_subsequence.
+    Matches segments by text equality and timestamp proximity, then
+    takes A before the match point and B after it.
+    """
+    if not a:
+        return list(b)
+    if not b:
+        return list(a)
+
+    a_end = float(a[-1].get("end", 0.0))
+    b_start = float(b[0].get("start", 0.0))
+
+    # No overlap — simple concatenation
+    if a_end <= b_start:
+        return a + b
+
+    # Extract segments in the overlap zone
+    overlap_a = [s for s in a if float(s.get("end", 0.0)) > b_start - overlap_secs]
+    overlap_b = [s for s in b if float(s.get("start", 0.0)) < a_end + overlap_secs]
+
+    if len(overlap_a) < 2 or len(overlap_b) < 2:
+        # Not enough overlap — cut at midpoint
+        cutoff = (a_end + b_start) / 2
+        return [s for s in a if float(s.get("end", 0.0)) <= cutoff] + [
+            s for s in b if float(s.get("start", 0.0)) >= cutoff
+        ]
+
+    # LCS dynamic programming on segment text + timestamp proximity
+    dp = [[0] * (len(overlap_b) + 1) for _ in range(len(overlap_a) + 1)]
+    for i in range(1, len(overlap_a) + 1):
+        for j in range(1, len(overlap_b) + 1):
+            sa, sb = overlap_a[i - 1], overlap_b[j - 1]
+            text_match = _seg_text(sa) == _seg_text(sb)
+            time_close = (
+                abs(float(sa.get("start", 0.0)) - float(sb.get("start", 0.0)))
+                < overlap_secs / 2
+            )
+            if text_match and time_close:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    # Backtrack to find matching pairs
+    pairs: list[tuple[int, int]] = []
+    i, j = len(overlap_a), len(overlap_b)
+    while i > 0 and j > 0:
+        sa, sb = overlap_a[i - 1], overlap_b[j - 1]
+        text_match = _seg_text(sa) == _seg_text(sb)
+        time_close = (
+            abs(float(sa.get("start", 0.0)) - float(sb.get("start", 0.0)))
+            < overlap_secs / 2
+        )
+        if text_match and time_close:
+            pairs.append((i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] > dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+
+    if not pairs:
+        cutoff = (a_end + b_start) / 2
+        return [s for s in a if float(s.get("end", 0.0)) <= cutoff] + [
+            s for s in b if float(s.get("start", 0.0)) >= cutoff
+        ]
+
+    # Build result: A up to first match, then B from first match onward
+    a_offset = len(a) - len(overlap_a)
+    first_a_idx = a_offset + pairs[0][0]
+    first_b_idx = pairs[0][1]
+
+    return a[:first_a_idx] + b[first_b_idx:]
 
 
 def _find_best_speaker(
