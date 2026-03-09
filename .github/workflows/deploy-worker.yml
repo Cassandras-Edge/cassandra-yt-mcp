@@ -1,0 +1,67 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npm run type-check
+
+      - name: Template wrangler.jsonc
+        run: |
+          node -e "
+          const fs = require('fs');
+          const config = {
+            '\$schema': 'node_modules/wrangler/config-schema.json',
+            name: 'cassandra-yt-mcp',
+            main: 'src/index.ts',
+            compatibility_date: '2025-03-10',
+            compatibility_flags: ['nodejs_compat'],
+            migrations: [
+              { new_sqlite_classes: ['CassandraYtMCP'], tag: 'v1' }
+            ],
+            durable_objects: {
+              bindings: [
+                { class_name: 'CassandraYtMCP', name: 'MCP_OBJECT' }
+              ]
+            },
+            kv_namespaces: [
+              { binding: 'OAUTH_KV', id: process.env.OAUTH_KV_ID },
+              { binding: 'MCP_KEYS', id: process.env.MCP_KEYS_KV_ID }
+            ],
+            routes: [
+              { pattern: process.env.WORKER_ROUTE_PATTERN, zone_name: process.env.WORKER_ROUTE_ZONE }
+            ],
+            observability: { enabled: true }
+          };
+          fs.writeFileSync('wrangler.jsonc', JSON.stringify(config, null, 2));
+          "
+        env:
+          OAUTH_KV_ID: ${{ secrets.OAUTH_KV_ID }}
+          MCP_KEYS_KV_ID: ${{ secrets.MCP_KEYS_KV_ID }}
+          WORKER_ROUTE_PATTERN: ${{ secrets.WORKER_ROUTE_PATTERN }}
+          WORKER_ROUTE_ZONE: ${{ secrets.WORKER_ROUTE_ZONE }}
+
+      - name: Deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

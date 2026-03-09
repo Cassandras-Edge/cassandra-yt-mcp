@@ -12,7 +12,7 @@ declare namespace Cloudflare {
     VM_PUSH_URL: string;
     VM_PUSH_CLIENT_ID: string;
     VM_PUSH_CLIENT_SECRET: string;
-    CASSANDRA_YT_MCP_OBJECT: DurableObjectNamespace<import("./src/index").CassandraYtMCP>;
+    MCP_OBJECT: DurableObjectNamespace<import("./src/index").CassandraYtMCP>;
   }
 }
 
