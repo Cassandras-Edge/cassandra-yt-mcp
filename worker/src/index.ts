@@ -157,11 +157,12 @@ async function resolveExternalToken(input: {
 }): Promise<{ props: Props; audience?: string | string[] } | null> {
   // Check MCP API key (mcp_ prefix)
   if (input.token.startsWith("mcp_")) {
-    const meta = await input.env.MCP_KEYS.get<{ name?: string; created_by?: string }>(
-      input.token,
-      "json",
-    );
-    if (meta) {
+    const meta = await input.env.MCP_KEYS.get<{
+      name?: string;
+      service?: string;
+      created_by?: string;
+    }>(input.token, "json");
+    if (meta && meta.service === "yt-mcp") {
       return {
         props: {
           userId: meta.created_by || "api-key",
