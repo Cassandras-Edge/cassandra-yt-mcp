@@ -155,6 +155,26 @@ async function resolveExternalToken(input: {
   request: Request;
   env: Env;
 }): Promise<{ props: Props; audience?: string | string[] } | null> {
+  // Check MCP API key (mcp_ prefix)
+  if (input.token.startsWith("mcp_")) {
+    const meta = await input.env.MCP_KEYS.get<{ name?: string; created_by?: string }>(
+      input.token,
+      "json",
+    );
+    if (meta) {
+      return {
+        props: {
+          userId: meta.created_by || "api-key",
+          email: "api-key@mcp",
+          name: meta.name || "API Key",
+          accessToken: input.token,
+        },
+      };
+    }
+    return null;
+  }
+
+  // WorkOS JWT validation
   try {
     const [headerB64, payloadB64, signatureB64] = input.token.split(".");
     const header = JSON.parse(atob(headerB64));

@@ -1,6 +1,7 @@
 declare namespace Cloudflare {
   interface Env {
     OAUTH_KV: KVNamespace;
+    MCP_KEYS: KVNamespace;
     WORKOS_CLIENT_ID: string;
     WORKOS_CLIENT_SECRET: string;
     COOKIE_ENCRYPTION_KEY: string;

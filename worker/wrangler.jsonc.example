@@ -21,7 +21,11 @@
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      "id": "<your-kv-namespace-id>"
+      "id": "<your-oauth-kv-namespace-id>"
+    },
+    {
+      "binding": "MCP_KEYS",
+      "id": "<your-mcp-keys-kv-namespace-id>"
     }
   ],
   "routes": [
