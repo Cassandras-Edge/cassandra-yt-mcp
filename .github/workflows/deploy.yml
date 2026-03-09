@@ -17,19 +17,31 @@ permissions:
 
 env:
   REGISTRY: 172.20.0.161:30500
-  IMAGE_NAME: cassandra-yt-mcp/backend
   GPU_BASE_TAG: cassandra-yt-mcp/gpu-base:cu128
 
 jobs:
   build-and-push:
     runs-on: gh-arc-cassandra-yt-mcp
+    strategy:
+      matrix:
+        include:
+          - name: coordinator
+            image: cassandra-yt-mcp/coordinator
+            dockerfile: backend/Dockerfile.coordinator
+            gpu: false
+          - name: worker
+            image: cassandra-yt-mcp/backend
+            dockerfile: backend/Dockerfile
+            gpu: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Pull cached gpu-base image
+        if: matrix.gpu
         run: docker pull ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} || true
 
       - name: Check if gpu-base needs rebuild
+        if: matrix.gpu
         id: check-base
         run: |
           # Hash the gpu-base portion of the Dockerfile (from first FROM to app stage)
@@ -47,7 +59,7 @@ jobs:
           fi
 
       - name: Build and push gpu-base
-        if: steps.check-base.outputs.changed == 'true'
+        if: matrix.gpu && steps.check-base.outputs.changed == 'true'
         run: |
           docker build \
             --target gpu-base \
@@ -61,19 +73,24 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
             type=sha,prefix=
 
-      - name: Build final image
+      - name: Build image
         run: |
+          BUILD_ARGS=""
+          if [ "${{ matrix.gpu }}" = "true" ]; then
+            BUILD_ARGS="--build-arg GPU_BASE=${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }}"
+          fi
           docker build \
-            --build-arg GPU_BASE=${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \
+            $BUILD_ARGS \
             --build-arg YTDLP_CHANNEL=nightly \
+            -f ${{ matrix.dockerfile }} \
             $(echo "${{ steps.meta.outputs.tags }}" | sed 's/^/-t /') \
             backend/
 
-      - name: Push final image
+      - name: Push image
         run: |
           echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
             docker push "$tag"

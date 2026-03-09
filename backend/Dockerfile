@@ -69,8 +69,8 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 3000 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null \
-   || curl -fsS "http://127.0.0.1:${WORKER_PORT}/worker/healthz" >/dev/null \
+  CMD curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1 \
+   || curl -fsS "http://127.0.0.1:${WORKER_PORT}/worker/healthz" >/dev/null 2>&1 \
    || exit 1
 
 CMD ["cassandra-yt-mcp-backend"]
