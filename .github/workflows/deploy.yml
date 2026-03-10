@@ -63,6 +63,7 @@ jobs:
         run: |
           docker build \
             --target gpu-base \
+            --build-arg HUGGINGFACE_TOKEN=${{ secrets.HUGGINGFACE_TOKEN }} \
             --label "gpu-base.hash=${{ steps.check-base.outputs.hash }}" \
             --cache-from ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \
             -t ${{ env.REGISTRY }}/${{ env.GPU_BASE_TAG }} \

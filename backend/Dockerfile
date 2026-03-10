@@ -25,6 +25,22 @@ RUN pip install --no-cache-dir --upgrade pip \
       "nemo_toolkit[asr]>=2.0.0" \
       "pyannote.audio>=3.3.0,<4.0"
 
+# Pre-download model weights into the image so startup only loads from disk
+ARG HUGGINGFACE_TOKEN=""
+ENV HF_HOME=/opt/hf_cache
+
+RUN python -c "\
+import nemo.collections.asr as nemo_asr; \
+model = nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v3'); \
+print('Parakeet model cached')"
+
+RUN python -c "\
+import os; \
+os.environ['TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'] = '1'; \
+from pyannote.audio import Pipeline; \
+p = Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth_token='${HUGGINGFACE_TOKEN}'); \
+print('pyannote pipeline cached')"
+
 # ── Stage 2: App code (fast, changes often) ──
 FROM ${GPU_BASE} AS app
 
@@ -49,7 +65,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-ENV PATH="/opt/venv/bin:${PATH}"
+ENV PATH="/opt/venv/bin:${PATH}" \
+    HF_HOME=/opt/hf_cache
 
 RUN pip install --no-cache-dir "."
 
