@@ -75,6 +75,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
+            type=raw,value=latest
             type=sha,prefix=
 
       - name: Build image

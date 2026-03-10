@@ -101,4 +101,4 @@ tofu apply
 ## CI
 
 - ARC runner scale set: `arc-runner-yt-mcp` (maxRunners: 2)
-- Builds Docker image → pushes to local registry → ArgoCD Image Updater syncs
+- Builds Docker image → pushes `:latest` to local registry → pods pick up on creation

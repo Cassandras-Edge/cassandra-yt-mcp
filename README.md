@@ -41,7 +41,7 @@ The backend image is built by ARC runners and pushed to the local registry:
 
 - `172.20.0.161:30500/cassandra-yt-mcp/backend:latest`
 
-ArgoCD Image Updater detects new tags and auto-syncs deployments.
+ArgoCD syncs the Helm chart using `:latest` with `pullPolicy: Always`.
 
 ## Secrets
 
