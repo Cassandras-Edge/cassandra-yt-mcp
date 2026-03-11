@@ -34,7 +34,9 @@ steps:
         --destination=172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest
         --destination=172.20.0.161:30500/cassandra-yt-mcp/coordinator:${CI_COMMIT_SHA:0:7}
         --insecure
-        --cache=false
+        --cache=true
+        --cache-repo=172.20.0.161:30500/cassandra-yt-mcp/coordinator-cache
+        --insecure-registry=172.20.0.161:30500
 
   - name: build-worker
     image: gcr.io/kaniko-project/executor:debug
@@ -54,7 +56,9 @@ steps:
         --destination=172.20.0.161:30500/cassandra-yt-mcp/backend:latest
         --destination=172.20.0.161:30500/cassandra-yt-mcp/backend:${CI_COMMIT_SHA:0:7}
         --insecure
-        --cache=false
+        --cache=true
+        --cache-repo=172.20.0.161:30500/cassandra-yt-mcp/backend-cache
+        --insecure-registry=172.20.0.161:30500
 
   # ── Deploy: CF Worker (push to main, only when worker/ changed) ──
 
