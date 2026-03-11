@@ -32,7 +32,6 @@ steps:
     when:
       - event: push
         branch: main
-    depends_on: [docker]
     environment:
       DOCKER_HOST: 'tcp://docker:2375'
     commands:
@@ -53,7 +52,6 @@ steps:
     when:
       - event: push
         branch: main
-    depends_on: [docker]
     environment:
       DOCKER_HOST: 'tcp://docker:2375'
       HUGGINGFACE_TOKEN:
