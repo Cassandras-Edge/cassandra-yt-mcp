@@ -1,0 +1,140 @@
+when:
+  - event: [push, pull_request]
+
+steps:
+  # ── CI: tests (all branches, push + PR) ──
+
+  - name: backend-test
+    image: python:3.12-slim
+    commands:
+      - cd backend
+      - pip install -e ".[dev]"
+      - pytest
+
+  - name: worker-typecheck
+    image: node:22-slim
+    commands:
+      - cd worker
+      - npm install
+      - npm run type-check
+
+  # ── Deploy: Docker images (push to main only) ──
+
+  - name: build-coordinator
+    image: docker
+    when:
+      - event: push
+        branch: main
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - |
+        SHORT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-7)
+        docker build \
+          --build-arg YTDLP_CHANNEL=nightly \
+          -f backend/Dockerfile.coordinator \
+          -t 172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest \
+          -t 172.20.0.161:30500/cassandra-yt-mcp/coordinator:$SHORT_SHA \
+          backend/
+        docker push 172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest
+        docker push 172.20.0.161:30500/cassandra-yt-mcp/coordinator:$SHORT_SHA
+
+  - name: build-worker
+    image: docker
+    when:
+      - event: push
+        branch: main
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      HUGGINGFACE_TOKEN:
+        from_secret: huggingface_token
+    commands:
+      - |
+        SHORT_SHA=$(echo $CI_COMMIT_SHA | cut -c1-7)
+        REGISTRY=172.20.0.161:30500
+        GPU_BASE_TAG=cassandra-yt-mcp/gpu-base:cu128
+
+        # Pull cached gpu-base
+        docker pull $REGISTRY/$GPU_BASE_TAG || true
+
+        # Check if gpu-base needs rebuild
+        BASE_HASH=$(sed -n '/^FROM nvidia/,/^FROM \${GPU_BASE}/p' backend/Dockerfile | sha256sum | cut -c1-16)
+        CACHED_HASH=$(docker inspect --format='{{index .Config.Labels "gpu-base.hash"}}' $REGISTRY/$GPU_BASE_TAG 2>/dev/null || echo "none")
+
+        if [ "$BASE_HASH" != "$CACHED_HASH" ]; then
+          echo "gpu-base changed ($CACHED_HASH -> $BASE_HASH), rebuilding"
+          docker build \
+            --target gpu-base \
+            --build-arg HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN \
+            --label "gpu-base.hash=$BASE_HASH" \
+            -t $REGISTRY/$GPU_BASE_TAG \
+            backend/
+          docker push $REGISTRY/$GPU_BASE_TAG
+        else
+          echo "gpu-base unchanged, skipping rebuild"
+        fi
+
+        docker build \
+          --build-arg GPU_BASE=$REGISTRY/$GPU_BASE_TAG \
+          --build-arg YTDLP_CHANNEL=nightly \
+          -f backend/Dockerfile \
+          -t $REGISTRY/cassandra-yt-mcp/backend:latest \
+          -t $REGISTRY/cassandra-yt-mcp/backend:$SHORT_SHA \
+          backend/
+        docker push $REGISTRY/cassandra-yt-mcp/backend:latest
+        docker push $REGISTRY/cassandra-yt-mcp/backend:$SHORT_SHA
+
+  # ── Deploy: CF Worker (push to main, only when worker/ changed) ──
+
+  - name: deploy-cf-worker
+    image: node:22-slim
+    when:
+      - event: push
+        branch: main
+        path: "worker/**"
+    environment:
+      CLOUDFLARE_API_TOKEN:
+        from_secret: cloudflare_api_token
+      CLOUDFLARE_ACCOUNT_ID:
+        from_secret: cloudflare_account_id
+      OAUTH_KV_ID:
+        from_secret: yt_mcp_oauth_kv_id
+      MCP_KEYS_KV_ID:
+        from_secret: mcp_keys_kv_id
+      WORKER_ROUTE_PATTERN:
+        from_secret: yt_mcp_worker_route_pattern
+      WORKER_ROUTE_ZONE:
+        from_secret: yt_mcp_worker_route_zone
+    commands:
+      - cd worker
+      - npm install
+      - |
+        node -e "
+        const fs = require('fs');
+        const config = {
+          '\$schema': 'node_modules/wrangler/config-schema.json',
+          name: 'cassandra-yt-mcp',
+          main: 'src/index.ts',
+          compatibility_date: '2025-03-10',
+          compatibility_flags: ['nodejs_compat'],
+          migrations: [
+            { new_sqlite_classes: ['CassandraYtMCP'], tag: 'v1' }
+          ],
+          durable_objects: {
+            bindings: [
+              { class_name: 'CassandraYtMCP', name: 'MCP_OBJECT' }
+            ]
+          },
+          kv_namespaces: [
+            { binding: 'OAUTH_KV', id: process.env.OAUTH_KV_ID },
+            { binding: 'MCP_KEYS', id: process.env.MCP_KEYS_KV_ID }
+          ],
+          routes: [
+            { pattern: process.env.WORKER_ROUTE_PATTERN, zone_name: process.env.WORKER_ROUTE_ZONE }
+          ],
+          observability: { enabled: true }
+        };
+        fs.writeFileSync('wrangler.jsonc', JSON.stringify(config, null, 2));
+        "
+      - npx wrangler deploy

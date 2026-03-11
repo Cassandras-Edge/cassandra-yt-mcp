@@ -27,7 +27,7 @@ cassandra-yt-mcp/
 │   ├── pyproject.toml
 │   └── tests/
 ├── infra/
-│   └── modules/           # Terraform: tunnel + worker-edge + backend-access
+│   └── modules/           # Terraform: worker-edge + backend-access
 └── README.md
 ```
 
@@ -47,13 +47,13 @@ Client → CF Worker (WorkOS OAuth OR mcp_ API key)
 
 ## Deploy
 
-Worker auto-deploys on push to main via GitHub Actions (`deploy-worker.yml`), triggered only when `worker/` files change. `wrangler.jsonc` is templated from repo secrets at deploy time.
+Worker auto-deploys on push to main via Woodpecker CI (`.woodpecker.yaml`), triggered only when `worker/` files change. `wrangler.jsonc` is templated from Woodpecker secrets at deploy time.
 
 ```bash
 # Manual deploy (if needed)
 cd worker && npm install && npx wrangler deploy
 
-# Backend image — built by ARC runner CI, pushed to local registry
+# Backend image — built by Woodpecker CI, pushed to local registry
 # ArgoCD deploys from cassandra-k8s/apps/cassandra-yt-mcp/
 
 # Infra (from cassandra-infra)
@@ -100,5 +100,5 @@ tofu apply
 
 ## CI
 
-- ARC runner scale set: `arc-runner-yt-mcp` (maxRunners: 2)
+- Woodpecker CI pipeline (`.woodpecker.yaml`)
 - Builds Docker image → pushes `:latest` to local registry → pods pick up on creation
