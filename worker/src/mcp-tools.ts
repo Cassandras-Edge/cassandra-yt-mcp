@@ -19,12 +19,34 @@ export function registerMcpTools(server: McpServer, env: Env): void {
   server.registerTool(
     "job_status",
     {
-      description: "Get the status of a transcription job.",
+      description:
+        "Get the status of a transcription job. Waits for the job to finish (up to ~5 minutes) before returning, using exponential backoff internally. Only returns early if the job is already complete, failed, or the timeout is exceeded.",
       annotations: { readOnlyHint: true },
       inputSchema: { job_id: z.string().describe("The job ID returned from transcribe()") },
     },
-    async ({ job_id }) =>
-      jsonToolResponse((await backendGet(env, `/api/jobs/${String(job_id)}`)) as Record<string, unknown>),
+    async ({ job_id }) => {
+      const id = String(job_id);
+      const IN_PROGRESS = new Set(["queued", "downloading", "downloaded", "transcribing"]);
+      const MAX_WAIT_MS = 5 * 60 * 1000;
+      const BASE_DELAY_MS = 2_000;
+      const MAX_DELAY_MS = 30_000;
+
+      const deadline = Date.now() + MAX_WAIT_MS;
+      let attempt = 0;
+
+      while (true) {
+        const result = (await backendGet(env, `/api/jobs/${id}`)) as Record<string, unknown>;
+        const status = result.status as string | undefined;
+
+        if (!status || !IN_PROGRESS.has(status) || Date.now() >= deadline) {
+          return jsonToolResponse(result);
+        }
+
+        const delay = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+        await new Promise((r) => setTimeout(r, delay));
+        attempt++;
+      }
+    },
   );
 
   server.registerTool(
