@@ -29,6 +29,8 @@ steps:
     when:
       - event: push
         branch: main
+        path:
+          include: ['backend/**']
     commands:
       - >
         /kaniko/executor
@@ -65,6 +67,8 @@ steps:
     when:
       - event: push
         branch: main
+        path:
+          include: ['backend/**']
     environment:
       HUGGINGFACE_TOKEN:
         from_secret: huggingface_token
