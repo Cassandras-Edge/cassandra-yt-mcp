@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -12,9 +13,28 @@ _BASE_RETRY_DELAY_SECONDS = 30
 _MAX_RETRY_DELAY_SECONDS = 600
 
 
+logger = logging.getLogger(__name__)
+
+
 class JobsRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
+
+    def recover_stale(self) -> int:
+        """Reset zombie downloading/transcribing jobs back to queued on startup."""
+        with self.db.lock:
+            cur = self.db.conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', started_at = NULL
+                WHERE status IN ('downloading', 'transcribing')
+                """
+            )
+            self.db.conn.commit()
+            count = cur.rowcount
+        if count:
+            logger.warning("Recovered %d stale jobs back to queued", count)
+        return count
 
     def count_queued(self) -> int:
         row = self.db.conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued'").fetchone()

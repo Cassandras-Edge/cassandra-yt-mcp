@@ -516,6 +516,7 @@ class AppRuntime:
             )
 
     def start(self) -> None:
+        self.jobs.recover_stale()
         transcripts_stored.set(self.transcripts.count())
         jobs_queued.set(self.jobs.count_queued())
         self.worker.start()
@@ -660,6 +661,7 @@ class DownloaderRuntime:
         )
 
     def start(self) -> None:
+        self.jobs.recover_stale()
         jobs_queued.set(self.jobs.count_queued())
         self.worker.start()
 
