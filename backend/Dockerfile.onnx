@@ -1,7 +1,7 @@
 # Lightweight ONNX-based GPU worker image.
 # No torch, no NeMo, no SpeechBrain. ~3GB vs ~9.5GB.
 
-FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
