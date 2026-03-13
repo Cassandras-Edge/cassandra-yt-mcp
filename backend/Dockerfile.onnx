@@ -24,13 +24,13 @@ RUN pip install --no-cache-dir --upgrade pip \
       scipy \
       scikit-learn
 
-# Pre-download models into the image
+# Pre-download models into the image (CPU-only at build time, no GPU available)
 ENV HF_HOME=/opt/hf_cache
 
 RUN python -c "\
 import onnx_asr; \
-onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3'); \
-onnx_asr.load_vad('silero'); \
+onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3', providers=['CPUExecutionProvider']); \
+onnx_asr.load_vad('silero', providers=['CPUExecutionProvider']); \
 print('onnx-asr models cached')"
 
 RUN python -c "\
