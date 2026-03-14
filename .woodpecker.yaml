@@ -26,10 +26,10 @@ steps:
       - npm install
       - npm run type-check
 
-  # ── Deploy: Docker images (push to main only) ──
+  # ── Deploy: Docker images via BuildKit (push to main only) ──
 
   - name: build-coordinator
-    image: gcr.io/kaniko-project/executor:debug
+    image: moby/buildkit:v0.21.1
     when:
       - event: push
         branch: main
@@ -37,39 +37,38 @@ steps:
           include: ['backend/Dockerfile.coordinator', 'backend/pyproject.toml', 'backend/src/**']
     commands:
       - >
-        /kaniko/executor
-        --dockerfile=backend/Dockerfile.coordinator
-        --context=backend
-        --build-arg=YTDLP_CHANNEL=stable
-        --destination=172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest
-        --destination=172.20.0.161:30500/cassandra-yt-mcp/coordinator:${CI_COMMIT_SHA:0:7}
-        --insecure
-        --snapshot-mode=redo
-        --cache=true
-        --cache-repo=172.20.0.161:30500/cassandra-yt-mcp/coordinator-cache
-        --compressed-caching=false
-        --insecure-registry=172.20.0.161:30500
+        buildctl
+        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        build
+        --frontend dockerfile.v0
+        --local context=backend
+        --local dockerfile=backend
+        --opt filename=Dockerfile.coordinator
+        --opt build-arg:YTDLP_CHANNEL=stable
+        --output type=image,"name=172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest,172.20.0.161:30500/cassandra-yt-mcp/coordinator:${CI_COMMIT_SHA:0:7}",push=true,registry.insecure=true
 
   # ── Cron: rebuild coordinator with latest yt-dlp stable (no cache) ──
 
   - name: rebuild-coordinator-ytdlp
-    image: gcr.io/kaniko-project/executor:debug
+    image: moby/buildkit:v0.21.1
     when:
       - event: cron
         cron: ytdlp-update
     commands:
       - >
-        /kaniko/executor
-        --dockerfile=backend/Dockerfile.coordinator
-        --context=backend
-        --build-arg=YTDLP_CHANNEL=stable
-        --destination=172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest
-        --insecure
-        --cache=false
-        --insecure-registry=172.20.0.161:30500
+        buildctl
+        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        build
+        --frontend dockerfile.v0
+        --local context=backend
+        --local dockerfile=backend
+        --opt filename=Dockerfile.coordinator
+        --opt build-arg:YTDLP_CHANNEL=stable
+        --opt no-cache=
+        --output type=image,name=172.20.0.161:30500/cassandra-yt-mcp/coordinator:latest,push=true,registry.insecure=true
 
   - name: build-worker-onnx
-    image: gcr.io/kaniko-project/executor:debug
+    image: moby/buildkit:v0.21.1
     when:
       - event: push
         branch: main
@@ -77,17 +76,14 @@ steps:
           include: ['backend/Dockerfile.onnx', 'backend/pyproject.toml', 'backend/src/**']
     commands:
       - >
-        /kaniko/executor
-        --dockerfile=backend/Dockerfile.onnx
-        --context=backend
-        --destination=172.20.0.161:30500/cassandra-yt-mcp/backend-onnx:latest
-        --destination=172.20.0.161:30500/cassandra-yt-mcp/backend-onnx:${CI_COMMIT_SHA:0:7}
-        --insecure
-        --cache=true
-        --snapshot-mode=redo
-        --cache-repo=172.20.0.161:30500/cassandra-yt-mcp/backend-onnx-cache
-        --compressed-caching=false
-        --insecure-registry=172.20.0.161:30500
+        buildctl
+        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        build
+        --frontend dockerfile.v0
+        --local context=backend
+        --local dockerfile=backend
+        --opt filename=Dockerfile.onnx
+        --output type=image,"name=172.20.0.161:30500/cassandra-yt-mcp/backend-onnx:latest,172.20.0.161:30500/cassandra-yt-mcp/backend-onnx:${CI_COMMIT_SHA:0:7}",push=true,registry.insecure=true
 
   # ── Deploy: CF Worker (push to main, only when worker/ changed) ──
 
