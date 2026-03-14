@@ -27,7 +27,7 @@ RUN cargo build --release
 # ── Stage 2: Download + convert models ──
 FROM python:3.12-slim AS models
 
-RUN pip install --no-cache-dir huggingface-hub onnx onnxconverter-common
+RUN pip install --no-cache-dir huggingface-hub onnxruntime
 
 # TDT model — download FP32, convert encoder to FP16 for 2x Tensor Core throughput
 RUN python -c "\
@@ -35,15 +35,38 @@ from huggingface_hub import snapshot_download; \
 snapshot_download('istupakov/parakeet-tdt-0.6b-v3-onnx', local_dir='/models/tdt')"
 
 # Convert encoder to FP16 (the big model — 600M params).
-# Keep decoder_joint as FP32 — it's tiny and FP16 can cause accuracy issues in beam search.
-# Model is >2GB so must save with external data to avoid protobuf size limit.
-RUN python -c "\
-import onnx; \
-from onnxconverter_common import float16; \
-model = onnx.load('/models/tdt/encoder-model.onnx', load_external_data=True); \
-model_fp16 = float16.convert_float_to_float16(model, keep_io_types=True); \
-onnx.save(model_fp16, '/models/tdt/encoder-model.onnx', save_as_external_data=True, all_tensors_to_one_file=True, location='encoder-model.onnx_data'); \
-print('Encoder converted to FP16')"
+# Uses onnxruntime's float16 converter which handles >2GB models on-disk.
+COPY <<'CONVERT_SCRIPT' /tmp/convert_fp16.py
+import numpy as np
+import onnx
+from onnx import numpy_helper, TensorProto
+
+model_path = "/models/tdt/encoder-model.onnx"
+model = onnx.load(model_path, load_external_data=True)
+
+# Convert float32 initializers to float16 in-place
+converted = 0
+for init in model.graph.initializer:
+    if init.data_type == TensorProto.FLOAT:
+        arr = numpy_helper.to_array(init).astype(np.float16)
+        new_tensor = numpy_helper.from_array(arr, init.name)
+        init.CopyFrom(new_tensor)
+        converted += 1
+
+print(f"Converted {converted} tensors to FP16")
+
+# Save with external data (model > 2GB protobuf limit)
+onnx.save(
+    model,
+    model_path,
+    save_as_external_data=True,
+    all_tensors_to_one_file=True,
+    location="encoder-model.onnx_data",
+    size_threshold=0,
+)
+print("Saved FP16 encoder")
+CONVERT_SCRIPT
+RUN python /tmp/convert_fp16.py
 
 # Sortformer v2.1 diarization model
 RUN python -c "\
