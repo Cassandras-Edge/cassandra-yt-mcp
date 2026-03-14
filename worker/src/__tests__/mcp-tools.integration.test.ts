@@ -110,7 +110,12 @@ function collectTools() {
     },
   };
 
-  registerMcpTools(server as any, createMockEnv());
+  registerMcpTools(server as any, createMockEnv(), {
+    userId: "test-user",
+    email: "test@example.com",
+    name: "Test User",
+    accessToken: "test-token",
+  } as any);
 
   return registered;
 }
