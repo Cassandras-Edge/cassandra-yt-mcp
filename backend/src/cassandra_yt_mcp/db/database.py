@@ -114,6 +114,9 @@ class Database:
         if "audio_path" not in columns:
             self._conn.execute("ALTER TABLE jobs ADD COLUMN audio_path TEXT")
             self._conn.commit()
+        if "cookies_b64" not in columns:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN cookies_b64 TEXT")
+            self._conn.commit()
 
     def close(self) -> None:
         with self._lock:

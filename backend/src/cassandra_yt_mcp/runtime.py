@@ -94,8 +94,9 @@ class DownloaderWorker:
     def _handle_job(self, job: dict[str, object]) -> None:
         job_id = str(job["id"])
         attempt = int(job.get("attempt") or 0)
+        cookies_b64 = str(job["cookies_b64"]) if job.get("cookies_b64") else None
         try:
-            self._download_job(job_id=job_id, url=str(job["url"]))
+            self._download_job(job_id=job_id, url=str(job["url"]), cookies_b64=cookies_b64)
             jobs_total.labels(status="downloaded", transcriber="n/a").inc()
         except Exception as exc:  # noqa: BLE001
             transient = _is_transient_error(exc)
@@ -105,14 +106,17 @@ class DownloaderWorker:
         finally:
             self._active_count -= 1
 
-    def _download_job(self, *, job_id: str, url: str) -> None:
+    def _download_job(self, *, job_id: str, url: str, cookies_b64: str | None = None) -> None:
+        cookies_file = _write_temp_cookies(cookies_b64, self.downloader.work_root.parent) if cookies_b64 else None
         jobs_in_progress.labels(phase="downloading").inc()
         try:
             t0 = time.monotonic()
-            download = self.downloader.download(url=url, job_id=job_id)
+            download = self.downloader.download(url=url, job_id=job_id, cookies_file=cookies_file)
             download_duration_seconds.observe(time.monotonic() - t0)
         finally:
             jobs_in_progress.labels(phase="downloading").dec()
+            if cookies_file and cookies_file.exists():
+                cookies_file.unlink()
 
         # Store download metadata alongside the audio for the transcribe stage
         meta_path = Path(download.audio_path).parent / "download_meta.json"
@@ -336,11 +340,13 @@ class BackgroundWorker:
     def _handle_job(self, job: dict[str, object]) -> None:
         job_id = str(job["id"])
         attempt = int(job.get("attempt") or 0)
+        cookies_b64 = str(job["cookies_b64"]) if job.get("cookies_b64") else None
         try:
             self._process_job(
                 job_id=job_id,
                 url=str(job["url"]),
                 normalized_url=str(job["normalized_url"]),
+                cookies_b64=cookies_b64,
             )
             transcriber_used = getattr(self.transcriber, "last_transcriber_used", "unknown")
             jobs_total.labels(status="completed", transcriber=transcriber_used).inc()
@@ -359,15 +365,18 @@ class BackgroundWorker:
         finally:
             self._active_count -= 1
 
-    def _process_job(self, *, job_id: str, url: str, normalized_url: str) -> None:
+    def _process_job(self, *, job_id: str, url: str, normalized_url: str, cookies_b64: str | None = None) -> None:
         # Download phase
+        cookies_file = _write_temp_cookies(cookies_b64, self.downloader.work_root.parent) if cookies_b64 else None
         jobs_in_progress.labels(phase="downloading").inc()
         try:
             t0 = time.monotonic()
-            download = self.downloader.download(url=url, job_id=job_id)
+            download = self.downloader.download(url=url, job_id=job_id, cookies_file=cookies_file)
             download_duration_seconds.observe(time.monotonic() - t0)
         finally:
             jobs_in_progress.labels(phase="downloading").dec()
+            if cookies_file and cookies_file.exists():
+                cookies_file.unlink()
 
         self.jobs.set_status(job_id, "transcribing")
 
@@ -491,6 +500,20 @@ class WatchLaterWorker:
 # ---------------------------------------------------------------------------
 
 
+def _write_temp_cookies(cookies_b64: str, data_dir: Path) -> Path | None:
+    """Decode base64 cookies to a temp file and return its path."""
+    cookies_dir = data_dir / "_cookies"
+    cookies_dir.mkdir(parents=True, exist_ok=True)
+    import uuid as _uuid  # noqa: PLC0415
+    cookies_path = cookies_dir / f"{_uuid.uuid4()}.txt"
+    try:
+        cookies_path.write_bytes(base64.b64decode(cookies_b64))
+        return cookies_path
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to decode per-job cookies")
+        return None
+
+
 def _is_transient_error(exc: Exception) -> bool:
     """Transient errors don't count toward the retry limit."""
     if isinstance(exc, NoHealthyWorkerError):
@@ -549,17 +572,15 @@ class AppRuntime:
         self.storage = StorageService(settings.data_dir)
         self.watch_later_repo = WatchLaterRepository(self.database)
 
-        # Set up yt-dlp cookie file from base64-encoded env var
-        cookies_file = self._setup_cookies(settings)
-        self.downloader = Downloader(settings.data_dir / "_work", cookies_file=cookies_file)
-        self.youtube_info = YouTubeInfoService(cookies_file=cookies_file)
+        self.downloader = Downloader(settings.data_dir / "_work")
+        self.youtube_info = YouTubeInfoService()
 
         # Watch Later service (shared by API + background worker)
         self.watch_later_service = WatchLaterService(
             watch_later_repo=self.watch_later_repo,
             transcripts_repo=self.transcripts,
             work_root=settings.data_dir / "_work",
-            enqueue_fn=self.enqueue_transcription,
+            enqueue_fn=lambda url, cookies_b64=None: self.enqueue_transcription(url, cookies_b64=cookies_b64),
         )
         self.watch_later_worker = WatchLaterWorker(
             watch_later_repo=self.watch_later_repo,
@@ -603,19 +624,6 @@ class AppRuntime:
         self.database.close()
 
     @staticmethod
-    def _setup_cookies(settings: Settings) -> Path | None:
-        if not settings.ytdlp_cookies:
-            return None
-        cookies_path = settings.data_dir / "_cookies.txt"
-        try:
-            cookies_path.write_bytes(base64.b64decode(settings.ytdlp_cookies))
-            logger.info("Wrote yt-dlp cookies to %s", cookies_path)
-            return cookies_path
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to decode YTDLP_COOKIES")
-            return None
-
-    @staticmethod
     def _build_transcriber(settings: Settings) -> object:
         if settings.role == "coordinator":
             logger.info("Coordinator mode — dispatching to GPU workers: %s", settings.gpu_workers)
@@ -638,14 +646,14 @@ class AppRuntime:
             enable_local=settings.enable_local_transcription,
         )
 
-    def enqueue_transcription(self, url: str) -> dict[str, object]:
+    def enqueue_transcription(self, url: str, cookies_b64: str | None = None) -> dict[str, object]:
         # Check for playlist URL — expand and enqueue each video
         if is_playlist_url(url):
-            return self._enqueue_playlist(url)
+            return self._enqueue_playlist(url, cookies_b64=cookies_b64)
 
-        return self._enqueue_single(url)
+        return self._enqueue_single(url, cookies_b64=cookies_b64)
 
-    def _enqueue_single(self, url: str) -> dict[str, object]:
+    def _enqueue_single(self, url: str, cookies_b64: str | None = None) -> dict[str, object]:
         normalized_url = normalize_url(url)
         existing = self.transcripts.get_by_normalized_url(normalized_url)
         if existing is None:
@@ -667,7 +675,7 @@ class AppRuntime:
                 "status": active["status"],
                 "deduplicated": True,
             }
-        job = self.jobs.enqueue(url=url, normalized_url=normalized_url)
+        job = self.jobs.enqueue(url=url, normalized_url=normalized_url, cookies_b64=cookies_b64)
         jobs_queued.inc()
         result: dict[str, object] = {"job_id": job["id"], "status": job["status"], "deduplicated": False}
         try:
@@ -676,11 +684,15 @@ class AppRuntime:
             logger.debug("Could not fetch metadata for %s at enqueue time", url)
         return result
 
-    def _enqueue_playlist(self, url: str) -> dict[str, object]:
+    def _enqueue_playlist(self, url: str, cookies_b64: str | None = None) -> dict[str, object]:
+        cookies_file = _write_temp_cookies(cookies_b64, self.settings.data_dir) if cookies_b64 else None
         try:
-            entries = self.downloader.expand_playlist(url)
+            entries = self.downloader.expand_playlist(url, cookies_file=cookies_file)
         except RuntimeError as exc:
             return {"error": "playlist_expansion_failed", "message": str(exc)}
+        finally:
+            if cookies_file and cookies_file.exists():
+                cookies_file.unlink()
 
         jobs: list[dict[str, object]] = []
         skipped = 0
@@ -689,7 +701,7 @@ class AppRuntime:
             if not video_url:
                 skipped += 1
                 continue
-            result = self._enqueue_single(video_url)
+            result = self._enqueue_single(video_url, cookies_b64=cookies_b64)
             jobs.append(result)
             if result.get("deduplicated"):
                 skipped += 1
@@ -728,8 +740,7 @@ class DownloaderRuntime:
         self.settings = settings
         self.database = Database(settings.database_path)
         self.jobs = JobsRepository(self.database)
-        cookies_file = AppRuntime._setup_cookies(settings)
-        self.downloader = Downloader(settings.data_dir / "_work", cookies_file=cookies_file)
+        self.downloader = Downloader(settings.data_dir / "_work")
         self.worker = DownloaderWorker(
             jobs=self.jobs,
             downloader=self.downloader,

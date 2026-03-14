@@ -21,7 +21,7 @@ class WatchLaterService:
         watch_later_repo: WatchLaterRepository,
         transcripts_repo: TranscriptsRepository,
         work_root: Path,
-        enqueue_fn: Callable[[str], dict[str, object]],
+        enqueue_fn: Callable[[str, str | None], dict[str, object]],
     ) -> None:
         self.watch_later = watch_later_repo
         self.transcripts = transcripts_repo
@@ -75,7 +75,7 @@ class WatchLaterService:
                 continue
 
             try:
-                result = self.enqueue_fn(url)
+                result = self.enqueue_fn(url, cookies_b64)
                 jobs.append(result)
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to enqueue %s for watch later sync", url)

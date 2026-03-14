@@ -11,10 +11,16 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
       annotations: { readOnlyHint: false, idempotentHint: true },
       inputSchema: { url: z.string().describe("The video URL to transcribe (YouTube, etc.)") },
     },
-    async ({ url }) =>
-      jsonToolResponse(
-        (await backendPost(env, "/api/jobs/transcribe", { url: String(url) })) as Record<string, unknown>,
-      ),
+    async ({ url }) => {
+      const body: Record<string, unknown> = { url: String(url) };
+      const cookies = auth.credentials?.youtube_cookies;
+      if (cookies) {
+        body.cookies_b64 = cookies;
+      }
+      return jsonToolResponse(
+        (await backendPost(env, "/api/jobs/transcribe", body)) as Record<string, unknown>,
+      );
+    },
   );
 
   server.registerTool(

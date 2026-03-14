@@ -13,7 +13,7 @@ class Downloader:
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.cookies_file = cookies_file
 
-    def download(self, *, url: str, job_id: str) -> DownloadResult:
+    def download(self, *, url: str, job_id: str, cookies_file: Path | None = None) -> DownloadResult:
         job_dir = self.work_root / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         output_template = str(job_dir / "%(id)s.%(ext)s")
@@ -40,8 +40,9 @@ class Downloader:
                 "-o",
                 output_template,
             ]
-            if self.cookies_file:
-                cmd.extend(["--cookies", str(self.cookies_file)])
+            effective_cookies = cookies_file or self.cookies_file
+            if effective_cookies:
+                cmd.extend(["--cookies", str(effective_cookies)])
             cmd.append(url)
 
             try:
@@ -67,7 +68,7 @@ class Downloader:
             raise RuntimeError("Audio file was not produced by yt-dlp")
         return DownloadResult(metadata=metadata, audio_path=str(candidates[0]))
 
-    def expand_playlist(self, url: str) -> list[dict[str, object]]:
+    def expand_playlist(self, url: str, cookies_file: Path | None = None) -> list[dict[str, object]]:
         """Expand a playlist URL into individual video entries (metadata only, no download)."""
         cmd = [
             "yt-dlp",
@@ -76,8 +77,9 @@ class Downloader:
             "--no-download",
             "--no-warnings",
         ]
-        if self.cookies_file:
-            cmd.extend(["--cookies", str(self.cookies_file)])
+        effective_cookies = cookies_file or self.cookies_file
+        if effective_cookies:
+            cmd.extend(["--cookies", str(effective_cookies)])
         cmd.append(url)
 
         try:

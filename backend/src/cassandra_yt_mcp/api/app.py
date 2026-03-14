@@ -74,7 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/jobs/transcribe", dependencies=[Depends(require_api_token)])
     def transcribe_job(payload: TranscribeRequest, runtime: AppRuntime = Depends(get_runtime)) -> dict[str, object]:
-        return runtime.enqueue_transcription(payload.url)
+        return runtime.enqueue_transcription(payload.url, cookies_b64=payload.cookies_b64)
 
     @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_api_token)])
     def job_status(job_id: str, runtime: AppRuntime = Depends(get_runtime)) -> dict[str, object]:

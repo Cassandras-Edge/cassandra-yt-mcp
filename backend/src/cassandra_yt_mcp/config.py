@@ -24,8 +24,6 @@ class Settings:
     worker_port: int  # Port for worker HTTP server (worker mode)
     download_concurrency: int  # Number of concurrent downloads (downloader mode)
     downloader_port: int  # Port for downloader healthz (downloader mode)
-    ytdlp_cookies: str | None  # Base64-encoded Netscape cookies file content
-    ytdlp_cookies_file: Path | None  # Resolved path to cookies file (written at startup)
     transcription_engine: str  # "onnx" | "nemo"
 
 
@@ -67,7 +65,5 @@ def load_settings() -> Settings:
         worker_port=_as_int("WORKER_PORT", 3001),
         download_concurrency=_as_int("DOWNLOAD_CONCURRENCY", 2),
         downloader_port=_as_int("DOWNLOADER_PORT", 3002),
-        ytdlp_cookies=os.getenv("YTDLP_COOKIES", "").strip() or None,
-        ytdlp_cookies_file=None,  # resolved at runtime startup
         transcription_engine=os.getenv("TRANSCRIPTION_ENGINE", "onnx").lower(),
     )

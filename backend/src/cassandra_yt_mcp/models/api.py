@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class TranscribeRequest(BaseModel):
     url: str = Field(min_length=1)
+    cookies_b64: str | None = None
 
 
 class WatchLaterSyncRequest(BaseModel):

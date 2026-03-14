@@ -40,15 +40,15 @@ class JobsRepository:
         row = self.db.conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued'").fetchone()
         return int(row[0]) if row else 0
 
-    def enqueue(self, url: str, normalized_url: str) -> dict[str, Any]:
+    def enqueue(self, url: str, normalized_url: str, cookies_b64: str | None = None) -> dict[str, Any]:
         job_id = str(uuid.uuid4())
         with self.db.lock:
             self.db.conn.execute(
                 """
-                INSERT INTO jobs(id, url, normalized_url, status)
-                VALUES (?, ?, ?, 'queued')
+                INSERT INTO jobs(id, url, normalized_url, status, cookies_b64)
+                VALUES (?, ?, ?, 'queued', ?)
                 """,
-                (job_id, url, normalized_url),
+                (job_id, url, normalized_url, cookies_b64),
             )
             self.db.conn.commit()
         job = self.get(job_id)
