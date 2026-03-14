@@ -32,16 +32,10 @@ pub struct TranscribeEngine {
 
 impl TranscribeEngine {
     pub fn new(tdt_dir: &str, sortformer_path: &str) -> Result<Self> {
-        // TensorRT for TDT — compiles ONNX to optimized CUDA kernels.
-        // First inference is slow (graph compilation), subsequent ones are ~4-5x faster.
-        // Falls back to CUDA EP automatically if TRT can't handle a node.
-        let trt_config = ExecutionConfig::new()
-            .with_execution_provider(ExecutionProvider::TensorRT);
-
         let cuda_config = ExecutionConfig::new()
             .with_execution_provider(ExecutionProvider::Cuda);
 
-        let tdt = ParakeetTDT::from_pretrained(tdt_dir, Some(trt_config))
+        let tdt = ParakeetTDT::from_pretrained(tdt_dir, Some(cuda_config.clone()))
             .wrap_err("failed to load TDT model")?;
 
         let sortformer = Sortformer::with_config(
