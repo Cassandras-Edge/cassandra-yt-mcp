@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-parakeet-rs = { version = "0.3", features = ["cuda", "sortformer"] }
+parakeet-rs = { version = "0.3", features = ["cuda", "tensorrt", "sortformer"] }
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

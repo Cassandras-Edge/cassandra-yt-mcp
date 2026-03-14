@@ -29,10 +29,13 @@ FROM python:3.12-slim AS models
 
 RUN pip install --no-cache-dir huggingface-hub
 
-# TDT model (encoder + decoder_joint + vocab)
+# TDT model — INT8 quantized encoder + decoder for faster inference
 RUN python -c "\
-from huggingface_hub import snapshot_download; \
-snapshot_download('istupakov/parakeet-tdt-0.6b-v3-onnx', local_dir='/models/tdt')"
+from huggingface_hub import hf_hub_download; \
+repo = 'istupakov/parakeet-tdt-0.6b-v3-onnx'; \
+for f in ['encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'vocab.txt', 'config.json']: \
+    hf_hub_download(repo, f, local_dir='/models/tdt'); \
+print('TDT INT8 models cached')"
 
 # Sortformer v2.1 diarization model
 RUN python -c "\
@@ -59,13 +62,15 @@ RUN cp -a /tmp/ort-lib/*.so* /usr/local/lib/ && rm -rf /tmp/ort-lib && ldconfig
 # Copy models
 COPY --from=models /models /models
 
-RUN mkdir -p /tmp/worker && chown -R app:app /tmp/worker
+# TensorRT engine cache — survives container restarts if volume-mounted
+RUN mkdir -p /tmp/worker /cache/trt && chown -R app:app /tmp/worker /cache/trt
 
 USER app
 
 ENV WORKER_PORT=3001 \
     MODEL_DIR=/models \
-    RUST_LOG=info
+    RUST_LOG=info \
+    ORT_TENSORRT_CACHE_PATH=/cache/trt
 
 EXPOSE 3001
 

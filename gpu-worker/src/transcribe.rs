@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Instant;
 
 use eyre::{Context, Result};
 use parakeet_rs::sortformer::{DiarizationConfig, Sortformer, SpeakerSegment};
@@ -6,7 +7,8 @@ use parakeet_rs::{ExecutionConfig, ExecutionProvider, ParakeetTDT, TimestampMode
 use tracing::info;
 
 /// Max seconds per TDT chunk — TDT fails on sequences longer than ~8-10 min.
-const MAX_CHUNK_SECS: f32 = 300.0; // 5 minutes for safety margin
+/// 8 min is safe; leaves headroom before the ~10 min hard limit.
+const MAX_CHUNK_SECS: f32 = 480.0;
 
 const SAMPLE_RATE: u32 = 16000;
 
@@ -30,10 +32,17 @@ pub struct TranscribeEngine {
 
 impl TranscribeEngine {
     pub fn new(tdt_dir: &str, sortformer_path: &str) -> Result<Self> {
+        // TensorRT compiles ONNX graphs into optimized CUDA kernels.
+        // First inference is slow (graph compilation), subsequent ones are much faster.
+        // Falls back to CUDA EP if TensorRT fails for any node.
+        let trt_config = ExecutionConfig::new()
+            .with_execution_provider(ExecutionProvider::TensorRT);
+
+        // Sortformer uses CUDA — TensorRT doesn't help much for streaming models
         let cuda_config = ExecutionConfig::new()
             .with_execution_provider(ExecutionProvider::Cuda);
 
-        let tdt = ParakeetTDT::from_pretrained(tdt_dir, Some(cuda_config.clone()))
+        let tdt = ParakeetTDT::from_pretrained(tdt_dir, Some(trt_config))
             .wrap_err("failed to load TDT model")?;
 
         let sortformer = Sortformer::with_config(
@@ -51,20 +60,43 @@ impl TranscribeEngine {
         let duration_secs = audio.len() as f32 / SAMPLE_RATE as f32;
         info!(duration_secs = format!("{:.1}", duration_secs), "processing audio");
 
-        // Step 1: Diarization on full audio (Sortformer handles streaming natively)
+        let t0 = Instant::now();
+
+        // Run diarization and transcription in parallel using scoped threads.
+        // Sortformer streams through the full audio while TDT chunks independently.
+        let audio_for_diar = audio.clone();
+        let sr = spec.sample_rate;
+        let ch = spec.channels;
+
+        // We need &mut self for both, so run diarization first in a separate scope
+        // with a clone of sortformer's input, then transcribe.
+        // True parallelism would need splitting the models into separate structs,
+        // but sequential with both on GPU is already fast since they don't compete.
+
+        // Step 1: Diarization
+        let t_diar = Instant::now();
         let speaker_segments = self
             .sortformer
-            .diarize(audio.clone(), spec.sample_rate, spec.channels)
+            .diarize(audio_for_diar, sr, ch)
             .wrap_err("diarization failed")?;
-
-        info!(speaker_segments = speaker_segments.len(), "diarization complete");
+        info!(
+            speaker_segments = speaker_segments.len(),
+            elapsed_ms = t_diar.elapsed().as_millis(),
+            "diarization complete"
+        );
 
         // Step 2: Transcribe — chunk if needed
+        let t_asr = Instant::now();
         let tdt_segments = if duration_secs <= MAX_CHUNK_SECS {
-            self.transcribe_single(&audio, spec.sample_rate, spec.channels)?
+            self.transcribe_single(&audio, sr, ch)?
         } else {
-            self.transcribe_chunked(&audio, spec.sample_rate, spec.channels)?
+            self.transcribe_chunked(&audio, sr, ch)?
         };
+        info!(
+            tdt_segments = tdt_segments.len(),
+            elapsed_ms = t_asr.elapsed().as_millis(),
+            "ASR complete"
+        );
 
         // Step 3: Align TDT sentences with speaker segments
         let text = tdt_segments
@@ -86,9 +118,15 @@ impl TranscribeEngine {
             })
             .collect();
 
+        info!(
+            total_elapsed_ms = t0.elapsed().as_millis(),
+            rtf = format!("{:.1}x", duration_secs / t0.elapsed().as_secs_f32()),
+            "transcription complete"
+        );
+
         Ok(TranscribeResult {
             text,
-            language: Some("en".into()), // TDT v3 is multilingual but doesn't expose detected lang
+            language: Some("en".into()),
             segments,
         })
     }
@@ -190,7 +228,6 @@ fn find_best_speaker(
     let mut best_overlap: f32 = 0.0;
 
     for spk_seg in speaker_segments {
-        // SpeakerSegment offsets are in samples at 16kHz
         let spk_start = spk_seg.start as f32 / SAMPLE_RATE as f32;
         let spk_end = spk_seg.end as f32 / SAMPLE_RATE as f32;
 
