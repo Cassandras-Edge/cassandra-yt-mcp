@@ -34,17 +34,88 @@ RUN python -c "\
 from huggingface_hub import snapshot_download; \
 snapshot_download('istupakov/parakeet-tdt-0.6b-v3-onnx', local_dir='/models/tdt')"
 
-# Convert encoder to FP16 using onnxruntime's optimizer.
-# This handles >2GB models properly and does full graph conversion.
+# Convert encoder to FP16 for 2x Tensor Core throughput.
+# The model is >2GB so we need to handle external data carefully.
 COPY <<'CONVERT_SCRIPT' /tmp/convert_fp16.py
-from onnxruntime.transformers import float16
-float16.convert_float_to_float16(
-    "/models/tdt/encoder-model.onnx",
-    "/models/tdt/encoder-model.onnx",
-    keep_io_types=True,
-    use_external_data_format=True,
+import os
+import numpy as np
+import onnx
+from onnx import TensorProto, helper, numpy_helper
+
+src = "/models/tdt/encoder-model.onnx"
+dst = "/models/tdt/encoder-fp16.onnx"
+
+# Load with external data
+model = onnx.load(src, load_external_data=True)
+
+# 1. Convert all float32 initializers to float16
+converted = 0
+for init in model.graph.initializer:
+    if init.data_type == TensorProto.FLOAT:
+        arr = numpy_helper.to_array(init).astype(np.float16)
+        init.Clear()
+        init.MergeFrom(numpy_helper.from_array(arr, init.name))
+        converted += 1
+
+# 2. Insert Cast nodes: float32 inputs → float16, float16 outputs → float32
+# Update all intermediate value_info from FLOAT to FLOAT16
+for vi in model.graph.value_info:
+    if vi.type.tensor_type.elem_type == TensorProto.FLOAT:
+        vi.type.tensor_type.elem_type = TensorProto.FLOAT16
+
+# 3. Update node attributes that reference float type
+for node in model.graph.node:
+    for attr in node.attribute:
+        if attr.type == onnx.AttributeProto.TENSOR and attr.t.data_type == TensorProto.FLOAT:
+            arr = numpy_helper.to_array(attr.t).astype(np.float16)
+            attr.t.CopyFrom(numpy_helper.from_array(arr))
+
+# 4. Add Cast nodes at graph inputs (float32 → float16) and outputs (float16 → float32)
+new_nodes = list(model.graph.node)
+for inp in model.graph.input:
+    if inp.type.tensor_type.elem_type == TensorProto.FLOAT:
+        cast_out = inp.name + "_fp16"
+        cast_node = helper.make_node("Cast", [inp.name], [cast_out], to=TensorProto.FLOAT16)
+        new_nodes.insert(0, cast_node)
+        # Rewire all nodes that use this input
+        for node in model.graph.node:
+            for i, ni in enumerate(node.input):
+                if ni == inp.name:
+                    node.input[i] = cast_out
+
+for out in model.graph.output:
+    if out.type.tensor_type.elem_type == TensorProto.FLOAT:
+        cast_in = out.name + "_fp16"
+        cast_node = helper.make_node("Cast", [cast_in], [out.name], to=TensorProto.FLOAT)
+        # Rewire the node that produces this output
+        for node in model.graph.node:
+            for i, no in enumerate(node.output):
+                if no == out.name:
+                    node.output[i] = cast_in
+        new_nodes.append(cast_node)
+
+del model.graph.node[:]
+model.graph.node.extend(new_nodes)
+
+print(f"Converted {converted} initializers to FP16")
+
+# Save with external data
+onnx.save(
+    model, dst,
+    save_as_external_data=True,
+    all_tensors_to_one_file=True,
+    location="encoder-fp16.onnx_data",
+    size_threshold=0,
 )
-print("Encoder converted to FP16")
+
+# Replace original
+os.remove(src)
+ext = src + "_data"
+if os.path.exists(ext):
+    os.remove(ext)
+os.rename(dst, src)
+os.rename("/models/tdt/encoder-fp16.onnx_data", "/models/tdt/encoder-model.onnx_data")
+print("FP16 encoder saved")
 CONVERT_SCRIPT
 RUN python /tmp/convert_fp16.py
 
