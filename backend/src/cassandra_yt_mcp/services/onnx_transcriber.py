@@ -267,59 +267,52 @@ class OnnxTranscriber:
 
         t_start = time.monotonic()
 
-        # Read audio as float32 mono 16kHz
-        samples, sr = sf.read(str(audio_path), dtype="float32")
-        if len(samples.shape) > 1:
-            samples = samples[:, 0]  # take first channel
-        if sr != _SAMPLE_RATE:
-            # Should already be 16kHz from _transcribe_wav, but guard
-            import scipy.signal  # noqa: PLC0415
-            samples = scipy.signal.resample_poly(
-                samples, _SAMPLE_RATE, sr,
-            ).astype(np.float32)
-
-        # Feed audio through VAD in chunks
-        window_size = 512  # Silero VAD expects 512 samples at 16kHz
+        # Stream audio through VAD in fixed-size read chunks to avoid
+        # loading the entire file into memory (3hr @ 16kHz = ~691MB).
+        read_chunk = 16000 * 10  # 10 seconds at a time
+        window_size = 512  # Silero VAD window
         vad = self._vad
         vad.reset()
 
-        # Feed VAD in chunks — convert each small numpy slice to list
-        # to avoid allocating a single huge Python list for the entire audio
-        idx = 0
-        while idx + window_size <= len(samples):
-            vad.accept_waveform(samples[idx : idx + window_size].tolist())
-            idx += window_size
+        with sf.SoundFile(str(audio_path)) as f:
+            sr = f.samplerate
+            while True:
+                chunk = f.read(read_chunk, dtype="float32")
+                if len(chunk) == 0:
+                    break
+                if len(chunk.shape) > 1:
+                    chunk = chunk[:, 0]
+                # Feed VAD in 512-sample windows
+                idx = 0
+                while idx + window_size <= len(chunk):
+                    vad.accept_waveform(chunk[idx : idx + window_size].tolist())
+                    idx += window_size
 
-        # Flush remaining samples
         vad.flush()
 
-        # Collect all VAD segments
-        vad_segments: list[tuple[float, np.ndarray]] = []
-        while not vad.empty():
-            seg = vad.front()
-            seg_start_secs = seg.start / _SAMPLE_RATE
-            seg_samples = np.array(seg.samples, dtype=np.float32)
-            vad_segments.append((seg_start_secs, seg_samples))
-            vad.pop()
-
-        t_vad = time.monotonic() - t_start
-
-        if not vad_segments:
-            return [], "", None
-
-        logger.info("VAD completed in %.1fs — %d speech segments", t_vad, len(vad_segments))
-
-        # Create streams and batch-decode
+        # Collect VAD segments — create streams immediately to avoid
+        # keeping raw audio samples in memory
         streams: list[sherpa_onnx.OfflineStream] = []
         segment_offsets: list[float] = []
         segment_durations: list[float] = []
 
-        for seg_start_secs, seg_samples in vad_segments:
+        while not vad.empty():
+            seg = vad.front()
+            seg_start_secs = seg.start / _SAMPLE_RATE
+            seg_samples = seg.samples  # already a list of floats
             s = self._recognizer.create_stream()
-            s.accept_waveform(_SAMPLE_RATE, seg_samples.tolist())
+            s.accept_waveform(_SAMPLE_RATE, seg_samples)
             streams.append(s)
             segment_offsets.append(seg_start_secs + offset_secs)
             segment_durations.append(len(seg_samples) / _SAMPLE_RATE)
+            vad.pop()
+
+        t_vad = time.monotonic() - t_start
+
+        if not streams:
+            return [], "", None
+
+        logger.info("VAD completed in %.1fs — %d speech segments", t_vad, len(streams))
 
         # BATCHED GPU inference — single call for all segments
         t_decode_start = time.monotonic()
