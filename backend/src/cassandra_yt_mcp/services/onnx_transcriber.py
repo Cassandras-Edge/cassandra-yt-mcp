@@ -101,29 +101,33 @@ class OnnxTranscriber:
                 wav_path.unlink(missing_ok=True)
 
     def _transcribe_wav(self, wav_path: Path) -> TranscriptResult:
-        # Load and ensure mono 16kHz
-        waveform, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
-        if waveform.shape[1] > 1:
-            waveform = waveform.mean(axis=1)
+        # Ensure mono 16kHz WAV on disk (ffmpeg already does this in _to_wav,
+        # but handle raw .wav uploads that might be stereo/wrong sample rate)
+        info = sf.info(str(wav_path))
+        if info.samplerate != 16000 or info.channels > 1:
+            mono_path = wav_path.with_suffix(".mono.wav")
+            waveform, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
+            if waveform.shape[1] > 1:
+                waveform = waveform.mean(axis=1)
+            else:
+                waveform = waveform[:, 0]
+            if sr != 16000:
+                from scipy.signal import resample as scipy_resample  # noqa: PLC0415
+
+                num_samples = int(len(waveform) * 16000 / sr)
+                waveform = scipy_resample(waveform, num_samples).astype(np.float32)
+            sf.write(str(mono_path), waveform, 16000)
+            del waveform
+            gc.collect()
+            cleanup_mono = True
         else:
-            waveform = waveform[:, 0]
-
-        if sr != 16000:
-            from scipy.signal import resample as scipy_resample  # noqa: PLC0415
-
-            num_samples = int(len(waveform) * 16000 / sr)
-            waveform = scipy_resample(waveform, num_samples).astype(np.float32)
-            sr = 16000
-
-        # Write mono 16kHz WAV for onnx-asr (it reads files)
-        mono_path = wav_path.with_suffix(".mono.wav")
-        sf.write(str(mono_path), waveform, sr)
+            mono_path = wav_path
+            cleanup_mono = False
 
         try:
-            # ASR with VAD chunking + timestamps
+            # ASR with VAD chunking + timestamps (onnx-asr reads from disk)
             segments_iter = self._asr_model.recognize(str(mono_path))  # type: ignore[union-attr]
 
-            # Collect all segment results
             all_text_parts: list[str] = []
             raw_segments: list[dict[str, object]] = []
             detected_lang: str | None = None
@@ -140,19 +144,18 @@ class OnnxTranscriber:
                 start = getattr(seg_result, "start", 0.0)
                 end = getattr(seg_result, "end", 0.0)
 
-                # Build segment entries from token-level timestamps if available
                 raw_segments.append({
                     "text": text,
                     "start": float(start),
                     "end": float(end),
                 })
 
-                # Detect language from first segment
                 if detected_lang is None:
                     lang = getattr(seg_result, "lang", None) or getattr(seg_result, "language", None)
                     if lang and isinstance(lang, str):
                         detected_lang = lang.strip().lower()[:2] or None
 
+            del segments_iter
             text = " ".join(all_text_parts)
             gc.collect()
 
@@ -161,8 +164,8 @@ class OnnxTranscriber:
             if not detected_lang and not _text_uses_european_scripts(text):
                 raise UnsupportedLanguageError("unknown")
 
-            # Diarization
-            speaker_turns = self._diarization(waveform)  # type: ignore[misc]
+            # Diarization — reads from disk, memory-bounded
+            speaker_turns = self._diarization(str(mono_path))  # type: ignore[misc]
             gc.collect()
 
             return TranscriptResult(
@@ -171,7 +174,8 @@ class OnnxTranscriber:
                 language=detected_lang or "en",
             )
         finally:
-            mono_path.unlink(missing_ok=True)
+            if cleanup_mono:
+                mono_path.unlink(missing_ok=True)
 
 
 def _text_uses_european_scripts(text: str) -> bool:

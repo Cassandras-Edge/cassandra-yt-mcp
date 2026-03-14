@@ -3,14 +3,20 @@
 Adapted from pyannote-onnx-extended (MIT, Samson Woof).
 Replaces librosa with scipy/numpy, pyannote.core with plain tuples,
 and av with soundfile — eliminating torch/pyannote/numba deps entirely.
+
+Memory-bounded: reads audio from disk in chunks, never holds the full
+waveform in memory. Handles multi-hour audio without OOM.
 """
 
 from __future__ import annotations
 
+import gc
 import logging
 from itertools import permutations
+
 import numpy as np
 import onnxruntime as ort
+import soundfile as sf
 from huggingface_hub import hf_hub_download
 from scipy.signal import get_window, stft as _scipy_stft  # noqa: F401
 from scipy.spatial.distance import cdist
@@ -20,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 _SEGMENTATION_REPO = "onnx-community/pyannote-segmentation-3.0"
 _EMBEDDING_REPO = "onnx-community/wespeaker-voxceleb-resnet34-LM"
+
+# Max segment duration (seconds) for embedding extraction.
+# Longer segments are split into sub-segments to bound memory.
+_MAX_EMB_SEGMENT_SECS = 30.0
 
 
 # ── Mel spectrogram (replaces librosa.feature.melspectrogram) ────────────
@@ -60,11 +70,9 @@ def _melspectrogram(
 ) -> np.ndarray:
     """Compute log-mel spectrogram using scipy STFT + numpy mel filterbank.
 
-    Equivalent to librosa.feature.melspectrogram with window='hamming', center=False.
     Returns shape (n_mels, T).
     """
     window = get_window("hamming", n_fft, fftbins=True).astype(np.float64)
-    # scipy.signal.stft returns (freqs, times, Zxx)
     _, _, zxx = _scipy_stft(
         y.astype(np.float64),
         fs=sr,
@@ -120,11 +128,23 @@ def _merge_annotation(
     return result
 
 
+def _read_audio_chunk(
+    audio_path: str, start_sample: int, num_samples: int,
+) -> np.ndarray:
+    """Read a chunk of audio from disk without loading the full file."""
+    with sf.SoundFile(audio_path) as f:
+        f.seek(start_sample)
+        return f.read(num_samples, dtype="float32")
+
+
 # ── Main diarization class ──────────────────────────────────────────────
 
 
 class OnnxDiarization:
-    """ONNX-based speaker diarization using pyannote segmentation + wespeaker embeddings."""
+    """ONNX-based speaker diarization using pyannote segmentation + wespeaker embeddings.
+
+    Reads audio from disk in chunks — memory stays bounded regardless of duration.
+    """
 
     def __init__(
         self,
@@ -176,19 +196,29 @@ class OnnxDiarization:
 
     def __call__(
         self,
-        waveform: np.ndarray,
+        audio_path: str,
         *,
         num_speakers: int | None = None,
     ) -> list[tuple[float, float, str]]:
-        """Run diarization on mono 16kHz waveform (1-D float32 array).
+        """Run diarization on a mono 16kHz WAV file.
 
+        Reads from disk in chunks — does not load full audio into memory.
         Returns list of (start, end, speaker_label) tuples.
         """
-        # 1. Segmentation
-        segments = self._run_segmentation(waveform)
+        info = sf.info(audio_path)
+        total_samples = info.frames
+        total_duration = total_samples / self._sample_rate
 
-        # 2. Embedding extraction
-        embeddings, valid_segments = self._extract_embeddings(waveform, segments)
+        # 1. Segmentation (reads from disk in sliding windows)
+        segments = self._run_segmentation(audio_path, total_samples, total_duration)
+        logger.info(
+            "Diarization segmentation: %d segments from %.0fs audio",
+            len(segments), total_duration,
+        )
+
+        # 2. Embedding extraction (reads each segment from disk individually)
+        embeddings, valid_segments = self._extract_embeddings(audio_path, segments)
+        gc.collect()
 
         if len(embeddings) == 0:
             return []
@@ -203,26 +233,32 @@ class OnnxDiarization:
 
         return _merge_annotation(turns)
 
-    def _run_segmentation(self, waveform: np.ndarray) -> list[tuple[float, float]]:
+    def _run_segmentation(
+        self, audio_path: str, total_samples: int, total_duration: float,
+    ) -> list[tuple[float, float]]:
         sr = self._sample_rate
         step_samples = int(self._step * sr)
         window_samples = int(self._duration * sr)
 
-        # Pad waveform to full windows
-        pad_width = window_samples - (len(waveform) % window_samples)
-        if pad_width < window_samples:
-            waveform = np.pad(waveform, (0, pad_width), mode="constant")
-
         num_frames = self._sample2frame(window_samples)
         seconds_per_frame = self._duration / num_frames
-        total_duration = len(waveform) / sr
         total_frames = int(total_duration / seconds_per_frame) + 100
 
         global_scores = np.zeros((total_frames, 3), dtype=np.float32)
         overlap_frames = self._sample2frame(window_samples - step_samples)
 
-        for i_sample in range(0, len(waveform) - window_samples + 1, step_samples):
-            chunk = waveform[i_sample : i_sample + window_samples]
+        for i_sample in range(0, total_samples, step_samples):
+            # Read just this window from disk
+            remaining = total_samples - i_sample
+            if remaining < window_samples // 2:
+                break  # skip very short tail
+
+            chunk = _read_audio_chunk(audio_path, i_sample, window_samples)
+
+            # Pad if shorter than window (last chunk)
+            if len(chunk) < window_samples:
+                chunk = np.pad(chunk, (0, window_samples - len(chunk)), mode="constant")
+
             chunk_input = chunk[np.newaxis, np.newaxis, :].astype(np.float32)
 
             out = self._seg_session.run(None, {"input_values": chunk_input})[0][0]
@@ -250,6 +286,9 @@ class OnnxDiarization:
             else:
                 global_scores[start_frame:end_frame] = speech_prob
 
+            del chunk, chunk_input, out
+            # No need to gc.collect() every iteration — just free references
+
         # Hysteresis thresholding
         is_active = [False, False, False]
         start_ts = [0.0, 0.0, 0.0]
@@ -275,6 +314,9 @@ class OnnxDiarization:
             if is_active[i] and total_duration - start_ts[i] >= self._min_duration_on:
                 speaker_segments[i].append((start_ts[i], total_duration))
 
+        del global_scores
+        gc.collect()
+
         # Merge per-speaker, then combine all
         all_segments: list[tuple[float, float]] = []
         for segs in speaker_segments:
@@ -283,42 +325,66 @@ class OnnxDiarization:
         return all_segments
 
     def _extract_embeddings(
-        self, waveform: np.ndarray, segments: list[tuple[float, float]],
+        self, audio_path: str, segments: list[tuple[float, float]],
     ) -> tuple[np.ndarray, list[tuple[float, float]]]:
         sr = self._sample_rate
         embeddings: list[np.ndarray] = []
         valid_segments: list[tuple[float, float]] = []
 
         for start, end in segments:
-            start_sample = int(start * sr)
-            end_sample = min(int(end * sr), len(waveform))
-            chunk = waveform[start_sample:end_sample]
+            seg_duration = end - start
+            if seg_duration < 400 / sr:
+                continue
+
+            # For long segments, extract embedding from a representative sub-segment
+            # to bound memory. Use the middle 30s (or full segment if shorter).
+            if seg_duration > _MAX_EMB_SEGMENT_SECS:
+                mid = (start + end) / 2
+                emb_start = max(start, mid - _MAX_EMB_SEGMENT_SECS / 2)
+                emb_end = min(end, mid + _MAX_EMB_SEGMENT_SECS / 2)
+            else:
+                emb_start, emb_end = start, end
+
+            start_sample = int(emb_start * sr)
+            num_samples = int((emb_end - emb_start) * sr)
+            chunk = _read_audio_chunk(audio_path, start_sample, num_samples)
 
             if len(chunk) < 400:
                 continue
 
-            # Mel spectrogram (replaces librosa)
-            melspec = _melspectrogram(
-                chunk, sr=sr, n_fft=400, hop_length=160, n_mels=80,
-            )
-            log_mel = np.log(melspec + 1e-6)
-            features = log_mel.T  # (T, n_mels)
-            features = features - np.mean(features, axis=0)
-            features = features[np.newaxis, :, :].astype(np.float32)
-
-            try:
-                emb = self._emb_session.run(None, {"input_features": features})[0][0]
-                norm = np.linalg.norm(emb)
-                if norm > 1e-6:
-                    emb = emb / norm
+            emb = self._compute_embedding(chunk)
+            if emb is not None:
                 embeddings.append(emb)
                 valid_segments.append((start, end))
-            except Exception:
-                logger.debug("Embedding extraction failed for segment %.1f-%.1f", start, end)
+
+            del chunk
 
         if not embeddings:
             return np.array([]), valid_segments
         return np.array(embeddings), valid_segments
+
+    def _compute_embedding(self, chunk: np.ndarray) -> np.ndarray | None:
+        """Compute speaker embedding for an audio chunk."""
+        sr = self._sample_rate
+        melspec = _melspectrogram(
+            chunk, sr=sr, n_fft=400, hop_length=160, n_mels=80,
+        )
+        log_mel = np.log(melspec + 1e-6)
+        features = log_mel.T  # (T, n_mels)
+        features = features - np.mean(features, axis=0)
+        features = features[np.newaxis, :, :].astype(np.float32)
+
+        del melspec, log_mel
+
+        try:
+            emb = self._emb_session.run(None, {"input_features": features})[0][0]
+            norm = np.linalg.norm(emb)
+            if norm > 1e-6:
+                emb = emb / norm
+            return emb
+        except Exception:
+            logger.debug("Embedding extraction failed", exc_info=True)
+            return None
 
     def _cluster_embeddings(
         self,
