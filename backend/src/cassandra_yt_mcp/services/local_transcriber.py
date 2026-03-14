@@ -76,6 +76,7 @@ class LocalTranscriber:
                 att_context_size=[256, 256],
             )
             model.change_subsampling_conv_chunking_factor(1)  # auto-chunk conv to reduce VRAM
+            model.freeze()  # required for NeMo's transcribe() with batch_size>1
             model.eval()
             gc.collect()
             torch.cuda.empty_cache()
