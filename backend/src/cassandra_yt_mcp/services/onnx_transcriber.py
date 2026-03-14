@@ -297,10 +297,10 @@ class OnnxTranscriber:
                 vad.pop()
 
         # Feed VAD in 512-sample windows, draining detected segments periodically
+        drain_interval = (16000 * 10 // window_size) * window_size  # ~10s, aligned to window
         for idx in range(0, len(samples) - window_size + 1, window_size):
             vad.accept_waveform(samples[idx : idx + window_size].tolist())
-            # Drain after every ~10s of audio to keep VAD buffer small
-            if idx % (16000 * 10) == 0:
+            if idx > 0 and idx % drain_interval == 0:
                 _drain_vad()
 
         del samples
