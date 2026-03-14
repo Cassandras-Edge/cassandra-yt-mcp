@@ -140,11 +140,7 @@ impl ModelConfig {
 
             #[cfg(feature = "cuda")]
             ExecutionProvider::Cuda => builder.with_execution_providers([
-                ort::ep::CUDA::default()
-                    .with_tf32(true)
-                    .with_conv_max_workspace(true)
-                    .with_fuse_conv_bias(true)
-                    .build(),
+                ort::ep::CUDA::default().build(),
                 CPUExecutionProvider::default().build().error_on_failure(),
             ])?,
 
