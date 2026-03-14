@@ -60,16 +60,27 @@ class LocalTranscriber:
 
     def _load_models(self) -> None:
         if self._asr_model is None:
+            import gc  # noqa: PLC0415
+
+            import torch  # noqa: PLC0415
             import nemo.collections.asr as nemo_asr  # noqa: PLC0415
 
             logger.info("Loading Parakeet model: %s", _PARAKEET_MODEL)
-            model = nemo_asr.models.ASRModel.from_pretrained(model_name=_PARAKEET_MODEL)
+            with torch.inference_mode():
+                model = nemo_asr.models.ASRModel.from_pretrained(
+                    model_name=_PARAKEET_MODEL, map_location=self._device,
+                )
+                # fp16 halves CPU RAM for weights and speeds up inference
+                if self._device != "cpu":
+                    model = model.to(dtype=torch.float16)
             model.change_attention_model(
                 self_attention_model="rel_pos_local_attn",
                 att_context_size=[256, 256],
             )
             model.change_subsampling_conv_chunking_factor(1)  # auto-chunk conv to reduce VRAM
             model.eval()
+            gc.collect()
+            torch.cuda.empty_cache()
             self._asr_model = model
 
         if self._diarization_pipeline is None:
@@ -95,30 +106,41 @@ class LocalTranscriber:
             self._diarization_pipeline = pipeline
 
     @staticmethod
-    def _ensure_mono(audio_path: Path) -> Path:
-        """Downmix to mono 16kHz WAV if needed — Parakeet expects single-channel input."""
+    def _ensure_mono(audio_path: Path) -> tuple[Path, int]:
+        """Downmix to mono 16kHz WAV if needed — Parakeet expects single-channel input.
+
+        Returns (mono_path, duration_samples) so callers don't need to reload.
+        """
+        import gc  # noqa: PLC0415
+
         import torchaudio  # noqa: PLC0415
 
         waveform, sr = torchaudio.load(str(audio_path))
-        if waveform.shape[0] == 1 and sr == 16000:
-            return audio_path
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if sr != 16000:
             waveform = torchaudio.functional.resample(waveform, sr, 16000)
+            sr = 16000
+        duration_samples = waveform.shape[1]
+        if waveform.shape[0] == 1 and sr == 16000 and audio_path.suffix in (".wav",):
+            # Already correct format — still return duration
+            del waveform
+            gc.collect()
+            return audio_path, duration_samples
         mono_path = audio_path.with_suffix(".mono.wav")
         torchaudio.save(str(mono_path), waveform, 16000)
-        return mono_path
+        del waveform
+        gc.collect()
+        return mono_path, duration_samples
 
     def transcribe(self, audio_path: Path) -> TranscriptResult:
-        import torchaudio  # noqa: PLC0415
+        import gc  # noqa: PLC0415
 
         self._load_models()
-        mono_path = self._ensure_mono(audio_path)
+        mono_path, duration_samples = self._ensure_mono(audio_path)
         audio_str = str(mono_path)
-
-        waveform, sr = torchaudio.load(str(mono_path))
-        duration_secs = waveform.shape[1] / sr
+        sr = 16000
+        duration_secs = duration_samples / sr
 
         if duration_secs <= _CHUNK_SECONDS + _OVERLAP_SECONDS:
             hypothesis = self._transcribe_file(audio_str)
@@ -126,7 +148,9 @@ class LocalTranscriber:
             detected_lang = self._detect_language(hypothesis, text)
             raw_segments = hypothesis.timestamp.get("segment", []) if hypothesis.timestamp else []
         else:
-            text, raw_segments, detected_lang = self._transcribe_chunked(waveform, sr, mono_path)
+            text, raw_segments, detected_lang = self._transcribe_chunked(mono_path)
+
+        gc.collect()
 
         if detected_lang and detected_lang not in SUPPORTED_LANGUAGES:
             raise UnsupportedLanguageError(detected_lang)
@@ -135,6 +159,8 @@ class LocalTranscriber:
 
         diarization = self._diarization_pipeline(audio_str)  # type: ignore[operator]
         speaker_turns = self._extract_speaker_turns(diarization)
+        del diarization
+        gc.collect()
         return TranscriptResult(
             text=text,
             segments=self._align_segments(raw_segments, speaker_turns),
@@ -144,21 +170,29 @@ class LocalTranscriber:
     def _transcribe_file(self, audio_path: str) -> object:
         import torch  # noqa: PLC0415
 
-        with torch.amp.autocast("cuda"):
+        with torch.inference_mode():
             return self._asr_model.transcribe(  # type: ignore[union-attr]
                 [audio_path], timestamps=True, batch_size=1,
             )[0]
 
     def _transcribe_chunked(
-        self, waveform: object, sr: int, mono_path: Path,
+        self, mono_path: Path,
     ) -> tuple[str, list[dict[str, object]], str | None]:
+        """Transcribe long audio in chunks, loading each from disk to avoid
+        holding the full waveform in memory."""
+        import gc  # noqa: PLC0415
+
         import torch  # noqa: PLC0415
         import torchaudio  # noqa: PLC0415
 
+        sr = 16000
         chunk_samples = _CHUNK_SECONDS * sr
         overlap_samples = _OVERLAP_SECONDS * sr
         stride = chunk_samples - overlap_samples
-        total_samples = waveform.shape[1]  # type: ignore[union-attr]
+
+        # Get total length without loading full audio into memory
+        info = torchaudio.info(str(mono_path))
+        total_samples = info.num_frames
 
         merged_segments: list[dict[str, object]] = []
         detected_lang: str | None = None
@@ -167,9 +201,15 @@ class LocalTranscriber:
 
         while offset < total_samples:
             end = min(offset + chunk_samples, total_samples)
-            chunk = waveform[:, offset:end]  # type: ignore[index]
+            num_frames = end - offset
+
+            # Load only this chunk from disk
+            chunk, _ = torchaudio.load(
+                str(mono_path), frame_offset=offset, num_frames=num_frames,
+            )
             chunk_path = mono_path.with_suffix(f".chunk{chunk_idx}.wav")
             torchaudio.save(str(chunk_path), chunk, sr)
+            del chunk
             chunk_offset_secs = offset / sr
 
             logger.info(
@@ -193,7 +233,9 @@ class LocalTranscriber:
                 merged_segments, chunk_segments, _OVERLAP_SECONDS,
             )
 
+            del hyp
             torch.cuda.empty_cache()
+            gc.collect()
             chunk_path.unlink(missing_ok=True)
             chunk_idx += 1
             offset += stride
