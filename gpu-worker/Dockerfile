@@ -19,9 +19,9 @@ WORKDIR /build
 COPY Cargo.toml ./
 COPY src ./src
 
-# Tell ort-sys to use our pre-downloaded CUDA-enabled ORT
-# ORT_LIB_LOCATION must point to dir containing lib/ and include/
-ENV ORT_LIB_LOCATION="/opt/ort/lib"
+# Tell ort-sys to dynamically link against our pre-downloaded CUDA-enabled ORT
+ENV ORT_LIB_LOCATION="/opt/ort/lib" \
+    ORT_PREFER_DYNAMIC_LINK=1
 RUN cargo build --release
 
 # ── Stage 2: Download models ──
