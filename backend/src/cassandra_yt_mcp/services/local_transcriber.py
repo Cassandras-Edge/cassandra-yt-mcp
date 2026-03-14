@@ -76,7 +76,6 @@ class LocalTranscriber:
                 att_context_size=[256, 256],
             )
             model.change_subsampling_conv_chunking_factor(1)  # auto-chunk conv to reduce VRAM
-            model.freeze()  # required for NeMo's transcribe() with batch_size>1
             model.eval()
             gc.collect()
             torch.cuda.empty_cache()
@@ -169,9 +168,9 @@ class LocalTranscriber:
     def _transcribe_file(self, audio_path: str) -> object:
         import torch  # noqa: PLC0415
 
-        with torch.inference_mode():
+        with torch.no_grad():
             return self._asr_model.transcribe(  # type: ignore[union-attr]
-                [audio_path], timestamps=True, batch_size=_BATCH_SIZE,
+                [audio_path], timestamps=True, batch_size=1,
             )[0]
 
     def _transcribe_chunked(
