@@ -63,12 +63,18 @@ RUN groupadd -g 1001 app && useradd -u 1001 -g app -s /bin/bash -m app
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY src ./src
 
 ENV PATH="/opt/venv/bin:${PATH}" \
     HF_HOME=/opt/hf_cache
 
-RUN pip install --no-cache-dir "."
+# Install app deps from pyproject.toml with stub package — source changes
+# won't invalidate this layer
+RUN mkdir -p src/cassandra_yt_mcp && touch src/cassandra_yt_mcp/__init__.py \
+ && pip install --no-cache-dir "."
+
+# Copy actual source — this layer is cheap to rebuild
+COPY --chown=app:app src ./src
+RUN pip install --no-cache-dir --no-deps "."
 
 RUN mkdir -p /data && chown -R app:app /app /data
 
