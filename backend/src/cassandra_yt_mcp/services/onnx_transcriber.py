@@ -286,7 +286,7 @@ class OnnxTranscriber:
         def _drain_vad() -> None:
             """Pop any completed segments from VAD and create ASR streams."""
             while not vad.empty():
-                seg = vad.front()
+                seg = vad.front
                 seg_start_secs = seg.start / _SAMPLE_RATE
                 seg_samples = seg.samples
                 s = self._recognizer.create_stream()
