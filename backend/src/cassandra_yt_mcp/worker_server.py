@@ -6,9 +6,11 @@ No database, no storage, no job queue — purely stateless.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, status
@@ -102,7 +104,11 @@ def create_worker_app(settings: Settings | None = None) -> FastAPI:
             tmp_path = Path(tmp.name)
 
         try:
-            result = transcriber.transcribe(tmp_path)
+            # Run in thread pool so uvicorn stays responsive to health checks
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, partial(transcriber.transcribe, tmp_path),
+            )
             return {
                 "text": result.text,
                 "language": result.language,
