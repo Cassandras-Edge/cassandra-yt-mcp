@@ -349,7 +349,7 @@ class OnnxTranscriber:
                 "end": end,
             })
 
-        del streams, vad_segments
+        del streams
         text = " ".join(all_text_parts)
         # Parakeet is English-only; sherpa-onnx doesn't expose language detection
         detected_lang: str | None = "en" if text else None
