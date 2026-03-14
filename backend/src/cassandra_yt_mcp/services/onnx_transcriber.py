@@ -268,43 +268,44 @@ class OnnxTranscriber:
         t_start = time.monotonic()
 
         window_size = 512  # Silero VAD expects 512 samples at 16kHz
+        max_stream_chunk = 160000  # 10s — avoid C++ vector overflow in accept_waveform
+
         vad = self._vad
         vad.reset()
 
-        # Read entire file — mono 16kHz float32 is ~11MB/min, manageable
         samples, sr = sf.read(str(audio_path), dtype="float32")
         if len(samples.shape) > 1:
             samples = samples[:, 0]
         logger.info("Read %d samples (%.0fs), feeding VAD", len(samples), len(samples) / _SAMPLE_RATE)
 
-        # Feed VAD in 512-sample windows
-        for idx in range(0, len(samples) - window_size + 1, window_size):
-            vad.accept_waveform(samples[idx : idx + window_size].tolist())
-        del samples
-
-        vad.flush()
-
-        # Collect VAD segments — create streams immediately to avoid
-        # keeping raw audio samples in memory
         streams: list[sherpa_onnx.OfflineStream] = []
         segment_offsets: list[float] = []
         segment_durations: list[float] = []
 
-        # Max samples per accept_waveform call — C++ std::vector has size limits
-        max_chunk = 160000  # 10 seconds at 16kHz
+        def _drain_vad() -> None:
+            """Pop any completed segments from VAD and create ASR streams."""
+            while not vad.empty():
+                seg = vad.front()
+                seg_start_secs = seg.start / _SAMPLE_RATE
+                seg_samples = seg.samples
+                s = self._recognizer.create_stream()
+                for i in range(0, len(seg_samples), max_stream_chunk):
+                    s.accept_waveform(_SAMPLE_RATE, seg_samples[i : i + max_stream_chunk])
+                streams.append(s)
+                segment_offsets.append(seg_start_secs + offset_secs)
+                segment_durations.append(len(seg_samples) / _SAMPLE_RATE)
+                vad.pop()
 
-        while not vad.empty():
-            seg = vad.front()
-            seg_start_secs = seg.start / _SAMPLE_RATE
-            seg_samples = seg.samples  # already a list of floats
-            s = self._recognizer.create_stream()
-            # Feed in chunks to avoid C++ vector size limits
-            for i in range(0, len(seg_samples), max_chunk):
-                s.accept_waveform(_SAMPLE_RATE, seg_samples[i : i + max_chunk])
-            streams.append(s)
-            segment_offsets.append(seg_start_secs + offset_secs)
-            segment_durations.append(len(seg_samples) / _SAMPLE_RATE)
-            vad.pop()
+        # Feed VAD in 512-sample windows, draining detected segments periodically
+        for idx in range(0, len(samples) - window_size + 1, window_size):
+            vad.accept_waveform(samples[idx : idx + window_size].tolist())
+            # Drain after every ~10s of audio to keep VAD buffer small
+            if idx % (16000 * 10) == 0:
+                _drain_vad()
+
+        del samples
+        vad.flush()
+        _drain_vad()
 
         t_vad = time.monotonic() - t_start
 
