@@ -52,8 +52,16 @@ class OnnxTranscriber:
 
         providers: list | None = None
         if self._use_gpu:
+            import os  # noqa: PLC0415
+
+            trt_cache = os.environ.get("TRT_ENGINE_CACHE_PATH", "/data/trt_cache")
+            os.makedirs(trt_cache, exist_ok=True)
             providers = [
-                ("TensorrtExecutionProvider", {"trt_fp16_enable": True}),
+                ("TensorrtExecutionProvider", {
+                    "trt_fp16_enable": True,
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": trt_cache,
+                }),
                 "CUDAExecutionProvider",
                 "CPUExecutionProvider",
             ]
