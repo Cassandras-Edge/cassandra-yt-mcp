@@ -29,15 +29,10 @@ FROM python:3.12-slim AS models
 
 RUN pip install --no-cache-dir huggingface-hub
 
-# TDT model — INT8 quantized encoder + decoder for faster inference
+# TDT model (encoder + decoder_joint + vocab)
 RUN python -c "\
-from huggingface_hub import hf_hub_download; \
-r='istupakov/parakeet-tdt-0.6b-v3-onnx'; d='/models/tdt'; \
-hf_hub_download(r,'encoder-model.int8.onnx',local_dir=d); \
-hf_hub_download(r,'decoder_joint-model.int8.onnx',local_dir=d); \
-hf_hub_download(r,'vocab.txt',local_dir=d); \
-hf_hub_download(r,'config.json',local_dir=d); \
-print('TDT INT8 models cached')"
+from huggingface_hub import snapshot_download; \
+snapshot_download('istupakov/parakeet-tdt-0.6b-v3-onnx', local_dir='/models/tdt')"
 
 # Sortformer v2.1 diarization model
 RUN python -c "\
@@ -49,7 +44,6 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg curl ca-certificates \
-      libnvinfer10 libnvinfer-plugin10 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g 1001 app && useradd -u 1001 -g app -s /bin/bash -m app
@@ -65,15 +59,13 @@ RUN cp -a /tmp/ort-lib/*.so* /usr/local/lib/ && rm -rf /tmp/ort-lib && ldconfig
 # Copy models
 COPY --from=models /models /models
 
-# TensorRT engine cache — survives container restarts if volume-mounted
-RUN mkdir -p /tmp/worker /cache/trt && chown -R app:app /tmp/worker /cache/trt
+RUN mkdir -p /tmp/worker && chown -R app:app /tmp/worker
 
 USER app
 
 ENV WORKER_PORT=3001 \
     MODEL_DIR=/models \
-    RUST_LOG=info \
-    ORT_TENSORRT_CACHE_PATH=/cache/trt
+    RUST_LOG=info
 
 EXPOSE 3001
 
