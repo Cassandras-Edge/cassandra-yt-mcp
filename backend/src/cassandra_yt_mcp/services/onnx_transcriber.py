@@ -50,11 +50,15 @@ class OnnxTranscriber:
 
         import onnx_asr  # noqa: PLC0415
 
-        providers: list[str] | None = None
+        providers: list | None = None
         if self._use_gpu:
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            providers = [
+                ("TensorrtExecutionProvider", {"trt_fp16_enable": True}),
+                "CUDAExecutionProvider",
+                "CPUExecutionProvider",
+            ]
 
-        logger.info("Loading onnx-asr model: %s", _PARAKEET_MODEL)
+        logger.info("Loading onnx-asr model: %s (TensorRT FP16 preferred)", _PARAKEET_MODEL)
         vad = onnx_asr.load_vad("silero", providers=providers)
         model = onnx_asr.load_model(
             _PARAKEET_MODEL,
@@ -64,7 +68,8 @@ class OnnxTranscriber:
         logger.info("onnx-asr model loaded")
 
         logger.info("Loading ONNX diarization models")
-        diar_providers = providers or ["CPUExecutionProvider"]
+        # Diarization uses simpler models — CUDA is sufficient, TRT overhead not worth it
+        diar_providers: list[str] = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._use_gpu else ["CPUExecutionProvider"]
         self._diarization = OnnxDiarization(providers=diar_providers)
         logger.info("ONNX diarization models loaded")
 

@@ -16,9 +16,10 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# Install ONNX runtime + ASR + diarization deps (no torch!)
+# Install TensorRT + ONNX runtime + ASR + diarization deps (no torch!)
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
+      tensorrt-cu12 \
       "onnx-asr[gpu,hub]" \
       soundfile \
       scipy \
