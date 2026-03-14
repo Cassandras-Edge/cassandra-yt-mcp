@@ -67,11 +67,10 @@ class LocalTranscriber:
             import nemo.collections.asr as nemo_asr  # noqa: PLC0415
 
             logger.info("Loading Parakeet model: %s", _PARAKEET_MODEL)
-            with torch.inference_mode():
-                model = nemo_asr.models.ASRModel.from_pretrained(
-                    model_name=_PARAKEET_MODEL, map_location=self._device,
-                )
-                model = model.to(self._device)
+            model = nemo_asr.models.ASRModel.from_pretrained(
+                model_name=_PARAKEET_MODEL, map_location=self._device,
+            )
+            model = model.to(self._device)
             model.change_attention_model(
                 self_attention_model="rel_pos_local_attn",
                 att_context_size=[256, 256],
