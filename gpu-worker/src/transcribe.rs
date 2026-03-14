@@ -32,18 +32,29 @@ pub struct TranscribeEngine {
 
 impl TranscribeEngine {
     pub fn new(tdt_dir: &str, sortformer_path: &str) -> Result<Self> {
-        // TensorRT compiles ONNX graphs into optimized CUDA kernels.
-        // First inference is slow (graph compilation), subsequent ones are much faster.
-        // Falls back to CUDA EP if TensorRT fails for any node.
-        let trt_config = ExecutionConfig::new()
-            .with_execution_provider(ExecutionProvider::TensorRT);
+        // Try TensorRT first (compiles ONNX to optimized CUDA kernels, 4-5x faster).
+        // Fall back to CUDA EP if TensorRT libs aren't available.
+        let tdt = {
+            let trt_config = ExecutionConfig::new()
+                .with_execution_provider(ExecutionProvider::TensorRT);
+            match ParakeetTDT::from_pretrained(tdt_dir, Some(trt_config)) {
+                Ok(tdt) => {
+                    info!("TDT loaded with TensorRT EP");
+                    tdt
+                }
+                Err(e) => {
+                    info!("TensorRT unavailable ({e:#}), falling back to CUDA EP");
+                    let cuda_config = ExecutionConfig::new()
+                        .with_execution_provider(ExecutionProvider::Cuda);
+                    ParakeetTDT::from_pretrained(tdt_dir, Some(cuda_config))
+                        .wrap_err("failed to load TDT model with CUDA")?
+                }
+            }
+        };
 
         // Sortformer uses CUDA — TensorRT doesn't help much for streaming models
         let cuda_config = ExecutionConfig::new()
             .with_execution_provider(ExecutionProvider::Cuda);
-
-        let tdt = ParakeetTDT::from_pretrained(tdt_dir, Some(trt_config))
-            .wrap_err("failed to load TDT model")?;
 
         let sortformer = Sortformer::with_config(
             sortformer_path,

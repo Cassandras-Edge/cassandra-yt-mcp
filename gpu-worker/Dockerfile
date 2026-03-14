@@ -49,6 +49,7 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg curl ca-certificates \
+      libnvinfer10 libnvinfer-plugin10 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g 1001 app && useradd -u 1001 -g app -s /bin/bash -m app
