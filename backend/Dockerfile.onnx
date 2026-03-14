@@ -19,7 +19,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Install sherpa-onnx CUDA wheel + diarization deps (no torch!)
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir \
-      sherpa-onnx==1.12.29+cuda -f https://k2-fsa.github.io/sherpa/onnx/cuda.html \
+      sherpa-onnx==1.12.29+cuda12.cudnn9 -f https://k2-fsa.github.io/sherpa/onnx/cuda.html \
  && pip install --no-cache-dir \
       numpy \
       soundfile \
