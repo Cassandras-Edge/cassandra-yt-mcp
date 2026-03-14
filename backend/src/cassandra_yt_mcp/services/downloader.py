@@ -20,8 +20,9 @@ class Downloader:
 
         # Worst audio is fine — Parakeet resamples to 16kHz mono anyway.
         # Saves bandwidth and download time (48kbps vs 256kbps).
+        # Falls back to combined formats if audio-only isn't available.
         format_attempts = [
-            ["-f", "worstaudio/worstaudio*", "-x"],
+            ["-f", "worstaudio/worstaudio*,worst", "-x"],
             ["-f", "worst", "-x"],
             ["-x"],  # no format selector — let yt-dlp pick whatever's available
         ]
