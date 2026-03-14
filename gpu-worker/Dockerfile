@@ -1,27 +1,27 @@
 # Rust GPU worker — parakeet-rs (Parakeet TDT + Sortformer diarization)
 # No Python, no PyTorch, no NeMo. Just Rust + ONNX Runtime + CUDA.
 
-# ── Stage 1: Build ──
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 AS builder
+# ── Stage 1: Build with CUDA-enabled ORT ──
+FROM rust:1.87-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl build-essential pkg-config libssl-dev cmake \
+      pkg-config libssl-dev cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Download ONNX Runtime GPU (ort crate v2.0.0-rc.12 → ORT 1.24.3)
+RUN curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v1.24.3/onnxruntime-linux-x64-gpu-1.24.3.tgz" \
+      -o /tmp/ort.tgz \
+    && mkdir -p /opt/ort \
+    && tar xzf /tmp/ort.tgz -C /opt/ort --strip-components=1 \
+    && rm /tmp/ort.tgz
 
 WORKDIR /build
 COPY Cargo.toml ./
 COPY src ./src
 
-# Build release binary — ort downloads ONNX Runtime with CUDA support
+# Tell ort crate to use our pre-downloaded CUDA-enabled ORT instead of downloading CPU-only
+ENV ORT_LIB_LOCATION="/opt/ort"
 RUN cargo build --release
-
-# Find where ort put the ONNX Runtime shared libs
-RUN find /build/target/release -name 'libonnxruntime*' -type f | head -20 > /tmp/ort_libs.txt \
-    && cat /tmp/ort_libs.txt
 
 # ── Stage 2: Download models ──
 FROM python:3.12-slim AS models
@@ -50,10 +50,9 @@ RUN groupadd -g 1001 app && useradd -u 1001 -g app -s /bin/bash -m app
 # Copy binary
 COPY --from=builder /build/target/release/yt-mcp-gpu-worker /usr/local/bin/yt-mcp-gpu-worker
 
-# Copy ONNX Runtime shared libs (ort downloads them into the build tree)
-# The exact path varies — copy everything matching from the release dir
-COPY --from=builder /build/target/release/libonnxruntime* /usr/local/lib/
-ENV LD_LIBRARY_PATH="/usr/local/lib"
+# Copy ONNX Runtime GPU shared libs (main lib + CUDA/TensorRT providers)
+COPY --from=builder /opt/ort/lib/ /usr/local/lib/ort/
+RUN ldconfig /usr/local/lib/ort
 
 # Copy models
 COPY --from=models /models /models
