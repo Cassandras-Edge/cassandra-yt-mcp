@@ -29,10 +29,10 @@ FROM python:3.12-slim AS models
 
 RUN pip install --no-cache-dir huggingface-hub
 
-# TDT model — FP16 export (encoder 1.5GB vs 2.4GB FP32, 2x Tensor Core throughput)
+# TDT model (encoder + decoder_joint + vocab)
 RUN python -c "\
 from huggingface_hub import snapshot_download; \
-snapshot_download('BugCat/parakeet-tdt-0.6b-v3-onnx-fp16', local_dir='/models/tdt')"
+snapshot_download('istupakov/parakeet-tdt-0.6b-v3-onnx', local_dir='/models/tdt')"
 
 # Sortformer v2.1 diarization model
 RUN python -c "\
