@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
+import tempfile
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
@@ -13,6 +15,22 @@ from cassandra_yt_mcp.models.api import TranscribeRequest, WatchLaterSyncRequest
 from cassandra_yt_mcp.runtime import AppRuntime
 
 _SKIP_METRICS_PATHS = frozenset({"/metrics", "/healthz"})
+
+
+@contextmanager
+def _cookies_from_header(request: Request):
+    """Decode X-Cookies-B64 header to a temp file, yield its Path (or None)."""
+    cookies_b64 = request.headers.get("x-cookies-b64")
+    if not cookies_b64:
+        yield None
+        return
+    tmp = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
+    try:
+        tmp.write(base64.b64decode(cookies_b64))
+        tmp.close()
+        yield Path(tmp.name)
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -148,47 +166,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/youtube/search", dependencies=[Depends(require_api_token)])
     def yt_search(
+        request: Request,
         query: str,
         runtime: AppRuntime = Depends(get_runtime),
         limit: int = Query(default=10, ge=1, le=25),
     ) -> dict[str, object]:
-        try:
-            results = runtime.youtube_info.search(query=query, limit=limit)
-        except RuntimeError as exc:
-            return {"error": "search_failed", "message": str(exc)}
+        with _cookies_from_header(request) as cookies_file:
+            try:
+                results = runtime.youtube_info.search(query=query, limit=limit, cookies_file=cookies_file)
+            except RuntimeError as exc:
+                return {"error": "search_failed", "message": str(exc)}
         return {"query": query, "count": len(results), "results": results}
 
     @app.get("/api/youtube/channel", dependencies=[Depends(require_api_token)])
     def list_channel_videos(
+        request: Request,
         url: str,
         runtime: AppRuntime = Depends(get_runtime),
         tab: str = Query(default="shorts", pattern="^(shorts|videos|streams)$"),
         limit: int = Query(default=20, ge=1, le=50),
     ) -> dict[str, object]:
-        try:
-            results = runtime.youtube_info.list_channel_videos(channel_url=url, limit=limit, tab=tab)
-        except RuntimeError as exc:
-            return {"error": "channel_list_failed", "message": str(exc)}
+        with _cookies_from_header(request) as cookies_file:
+            try:
+                results = runtime.youtube_info.list_channel_videos(
+                    channel_url=url, limit=limit, tab=tab, cookies_file=cookies_file,
+                )
+            except RuntimeError as exc:
+                return {"error": "channel_list_failed", "message": str(exc)}
         return {"url": url, "tab": tab, "count": len(results), "results": results}
 
     @app.get("/api/youtube/metadata", dependencies=[Depends(require_api_token)])
-    def get_metadata(url: str, runtime: AppRuntime = Depends(get_runtime)) -> dict[str, object]:
-        try:
-            return {"url": url, "metadata": runtime.youtube_info.get_metadata(url=url)}
-        except RuntimeError as exc:
-            return {"error": "metadata_failed", "message": str(exc)}
+    def get_metadata(request: Request, url: str, runtime: AppRuntime = Depends(get_runtime)) -> dict[str, object]:
+        with _cookies_from_header(request) as cookies_file:
+            try:
+                return {"url": url, "metadata": runtime.youtube_info.get_metadata(url=url, cookies_file=cookies_file)}
+            except RuntimeError as exc:
+                return {"error": "metadata_failed", "message": str(exc)}
 
     @app.get("/api/youtube/comments", dependencies=[Depends(require_api_token)])
     def get_comments(
+        request: Request,
         url: str,
         runtime: AppRuntime = Depends(get_runtime),
         limit: int = Query(default=20, ge=1, le=100),
         sort: str = Query(default="top", pattern="^(top|new)$"),
     ) -> dict[str, object]:
-        try:
-            comments = runtime.youtube_info.get_comments(url=url, limit=limit, sort=sort)
-        except RuntimeError as exc:
-            return {"error": "comments_failed", "message": str(exc)}
+        with _cookies_from_header(request) as cookies_file:
+            try:
+                comments = runtime.youtube_info.get_comments(url=url, limit=limit, sort=sort, cookies_file=cookies_file)
+            except RuntimeError as exc:
+                return {"error": "comments_failed", "message": str(exc)}
         return {"url": url, "count": len(comments), "sort": sort, "comments": comments}
 
     @app.post("/api/watch-later/sync", dependencies=[Depends(require_api_token)])

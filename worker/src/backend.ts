@@ -2,6 +2,7 @@ export async function backendGet(
   env: Env,
   path: string,
   params: Record<string, string | number | undefined> = {},
+  extraHeaders: Record<string, string> = {},
 ): Promise<any> {
   const url = new URL(path, env.BACKEND_BASE_URL);
   for (const [key, value] of Object.entries(params)) {
@@ -9,7 +10,7 @@ export async function backendGet(
       url.searchParams.set(key, String(value));
     }
   }
-  return fetchBackendJson(env, url, { method: "GET" });
+  return fetchBackendJson(env, url, { method: "GET", headers: extraHeaders });
 }
 
 export async function backendPost(

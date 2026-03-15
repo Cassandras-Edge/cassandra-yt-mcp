@@ -35,9 +35,10 @@ class YouTubeInfoService:
         "subtitles",
     ]
 
-    def _run_ytdlp(self, cmd: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess[str]:
-        if self.cookies_file:
-            cmd = [*cmd, "--cookies", str(self.cookies_file)]
+    def _run_ytdlp(self, cmd: list[str], *, timeout: int = 30, cookies_file: Path | None = None) -> subprocess.CompletedProcess[str]:
+        effective_cookies = cookies_file or self.cookies_file
+        if effective_cookies:
+            cmd = [*cmd, "--cookies", str(effective_cookies)]
         try:
             completed = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
@@ -46,7 +47,7 @@ class YouTubeInfoService:
             raise RuntimeError(completed.stderr.strip() or "yt-dlp failed")
         return completed
 
-    def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 10, cookies_file: Path | None = None) -> list[dict[str, Any]]:
         completed = self._run_ytdlp(
             [
                 "yt-dlp",
@@ -56,7 +57,8 @@ class YouTubeInfoService:
                 "--no-download",
                 "--no-warnings",
                 "--quiet",
-            ]
+            ],
+            cookies_file=cookies_file,
         )
         results: list[dict[str, Any]] = []
         for line in completed.stdout.strip().splitlines():
@@ -76,7 +78,7 @@ class YouTubeInfoService:
             )
         return results
 
-    def list_channel_videos(self, channel_url: str, limit: int = 20, tab: str = "shorts") -> list[dict[str, Any]]:
+    def list_channel_videos(self, channel_url: str, limit: int = 20, tab: str = "shorts", cookies_file: Path | None = None) -> list[dict[str, Any]]:
         """List videos from a channel URL. Tab can be 'shorts', 'videos', or 'streams'."""
         url = channel_url.rstrip("/")
         if not url.endswith(f"/{tab}"):
@@ -93,6 +95,7 @@ class YouTubeInfoService:
                 url,
             ],
             timeout=60,
+            cookies_file=cookies_file,
         )
         results: list[dict[str, Any]] = []
         for line in completed.stdout.strip().splitlines():
@@ -114,14 +117,15 @@ class YouTubeInfoService:
             })
         return results
 
-    def get_metadata(self, url: str) -> dict[str, Any]:
+    def get_metadata(self, url: str, cookies_file: Path | None = None) -> dict[str, Any]:
         completed = self._run_ytdlp(
-            ["yt-dlp", "--dump-json", "--no-warnings", "--no-download", "--no-playlist", url]
+            ["yt-dlp", "--dump-json", "--no-warnings", "--no-download", "--no-playlist", url],
+            cookies_file=cookies_file,
         )
         raw = json.loads(completed.stdout)
         return {key: raw[key] for key in self._METADATA_KEYS if key in raw}
 
-    def get_comments(self, url: str, limit: int = 20, sort: str = "top") -> list[dict[str, Any]]:
+    def get_comments(self, url: str, limit: int = 20, sort: str = "top", cookies_file: Path | None = None) -> list[dict[str, Any]]:
         cmd = [
             "yt-dlp",
             "--dump-json",
@@ -133,7 +137,7 @@ class YouTubeInfoService:
         if is_youtube_url(url):
             cmd.extend(["--extractor-args", f"youtube:comment_sort={sort};max_comments={limit},all,all"])
         cmd.append(url)
-        completed = self._run_ytdlp(cmd, timeout=120)
+        completed = self._run_ytdlp(cmd, timeout=120, cookies_file=cookies_file)
         data = json.loads(completed.stdout)
         comments: list[dict[str, Any]] = []
         for item in data.get("comments") or []:

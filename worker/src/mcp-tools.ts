@@ -3,6 +3,11 @@ import type { ResolvedAuth } from "cassandra-mcp-auth";
 import { z } from "zod";
 import { backendGet, backendPost, jsonToolResponse } from "./backend";
 
+function cookieHeaders(auth: ResolvedAuth): Record<string, string> {
+  const cookies = auth.credentials?.youtube_cookies;
+  return cookies ? { "X-Cookies-B64": cookies } : {};
+}
+
 export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth): void {
   server.registerTool(
     "transcribe",
@@ -119,7 +124,7 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
         (await backendGet(env, "/api/youtube/search", {
           limit: limit as number,
           query: String(query),
-        })) as Record<string, unknown>,
+        }, cookieHeaders(auth))) as Record<string, unknown>,
       ),
   );
 
@@ -141,7 +146,7 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
           url: String(url),
           tab: tab as string,
           limit: limit as number,
-        })) as Record<string, unknown>,
+        }, cookieHeaders(auth))) as Record<string, unknown>,
       ),
   );
 
@@ -154,7 +159,7 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
     },
     async ({ url }) =>
       jsonToolResponse(
-        (await backendGet(env, "/api/youtube/metadata", { url: String(url) })) as Record<string, unknown>,
+        (await backendGet(env, "/api/youtube/metadata", { url: String(url) }, cookieHeaders(auth))) as Record<string, unknown>,
       ),
   );
 
@@ -175,7 +180,7 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
           limit: limit as number,
           sort: sort as string,
           url: String(url),
-        })) as Record<string, unknown>,
+        }, cookieHeaders(auth))) as Record<string, unknown>,
       ),
   );
 
