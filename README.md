@@ -62,8 +62,8 @@ kubectl create secret generic cassandra-yt-mcp-backend \
 # MCP sidecar auth (for FastMCP path)
 kubectl create secret generic cassandra-yt-mcp-mcp \
   --namespace cassandra-yt-mcp \
-  --from-literal=ACL_URL=https://acl.<domain> \
-  --from-literal=ACL_SECRET=<acl-secret>
+  --from-literal=AUTH_URL=https://auth.<domain> \
+  --from-literal=AUTH_SECRET=<auth-secret>
 ```
 
 ### Cloudflare Worker (`wrangler secret put`)
