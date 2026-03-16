@@ -24,6 +24,8 @@ steps:
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
       - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
       - cd worker
       - npm install
       - npm run type-check
@@ -132,6 +134,8 @@ steps:
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
       - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
       - cd worker
       - npm install
       - |
