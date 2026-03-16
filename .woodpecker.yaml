@@ -23,9 +23,12 @@ steps:
         from_secret: github_token
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-      - printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > /root/.netrc
+      - printf "machine github.com\nlogin x-access-token\npassword $GITHUB_TOKEN\n" > /root/.netrc && chmod 600 /root/.netrc
       - git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
+      - echo "HOME=$HOME" && cat ~/.gitconfig && wc -c /root/.netrc
+      - git ls-remote https://github.com/DigiBugCat/cassandra-auth.git HEAD
       - cd worker
       - npm install
       - npm run type-check
@@ -133,9 +136,10 @@ steps:
         from_secret: yt_mcp_worker_route_zone
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-      - printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > /root/.netrc
+      - printf "machine github.com\nlogin x-access-token\npassword $GITHUB_TOKEN\n" > /root/.netrc && chmod 600 /root/.netrc
       - git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
       - git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
       - cd worker
       - npm install
       - |
