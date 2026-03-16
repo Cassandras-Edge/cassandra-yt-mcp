@@ -23,9 +23,9 @@ steps:
         from_secret: github_token
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+      - git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - echo "machine github.com login x-access-token password ${GITHUB_TOKEN}" > ~/.netrc
       - cd worker
       - npm install
       - npm run type-check
@@ -133,9 +133,9 @@ steps:
         from_secret: yt_mcp_worker_route_zone
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
-      - git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+      - git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - echo "machine github.com login x-access-token password ${GITHUB_TOKEN}" > ~/.netrc
       - cd worker
       - npm install
       - |
