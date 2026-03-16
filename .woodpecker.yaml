@@ -19,6 +19,7 @@ steps:
     when:
       - event: [push, pull_request]
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
       - cd worker
       - npm install
       - npm run type-check
@@ -123,6 +124,7 @@ steps:
       WORKER_ROUTE_ZONE:
         from_secret: yt_mcp_worker_route_zone
     commands:
+      - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
       - cd worker
       - npm install
       - |

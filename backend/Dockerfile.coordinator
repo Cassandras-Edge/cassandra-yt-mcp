@@ -39,9 +39,9 @@ COPY src ./src
 
 RUN pip install --no-cache-dir "." yt-dlp-ejs
 
-# Bundle ACL policy for local enforcement (injected at build time)
-ARG ACL_YAML_CONTENT=""
-RUN if [ -n "$ACL_YAML_CONTENT" ]; then printf '%s' "$ACL_YAML_CONTENT" > /app/acl.yaml; fi
+# Bundle auth policy for local enforcement (injected at build time)
+ARG AUTH_YAML_CONTENT=""
+RUN if [ -n "$AUTH_YAML_CONTENT" ]; then printf '%s' "$AUTH_YAML_CONTENT" > /app/acl.yaml; fi
 
 RUN mkdir -p /data && chown -R app:app /app /data
 
