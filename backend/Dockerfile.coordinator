@@ -17,7 +17,7 @@ RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x8
     && deno --version
 
 ARG YTDLP_CHANNEL=stable
-
+# bust cache: 2026-03-18 — pick up yt-dlp 2026.03.17 n challenge fix
 RUN set -eux; \
     if [ "$YTDLP_CHANNEL" = "nightly" ]; then \
       YTDLP_URL="https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp"; \
