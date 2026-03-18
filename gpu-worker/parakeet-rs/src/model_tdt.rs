@@ -61,12 +61,10 @@ impl ParakeetTDTModel {
     }
     //file names simply from: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/tree/main
     fn find_encoder(dir: &Path) -> Result<PathBuf> {
-        // Prefer INT8 for TensorRT (TRT optimizes INT8 natively)
-        // CUDA EP fallback will also work with INT8 but slower
         let candidates = [
-            "encoder-model.int8.onnx",
             "encoder-model.onnx",
             "encoder.onnx",
+            "encoder-model.int8.onnx",
         ];
         for candidate in &candidates {
             let path = dir.join(candidate);
@@ -93,8 +91,8 @@ impl ParakeetTDTModel {
 
     fn find_decoder_joint(dir: &Path) -> Result<PathBuf> {
         let candidates = [
-            "decoder_joint-model.int8.onnx",
             "decoder_joint-model.onnx",
+            "decoder_joint-model.int8.onnx",
             "decoder_joint.onnx",
             "decoder-model.onnx",
         ];
