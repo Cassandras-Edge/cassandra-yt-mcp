@@ -2,13 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::{DefaultBodyLimit, Multipart, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::StatusCode;
 use axum::response::Json;
 use axum::routing::{get, post};
 use axum::Router;
 use eyre::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -57,8 +57,17 @@ async fn healthz() -> Json<HealthResponse> {
     })
 }
 
+#[derive(Deserialize)]
+struct TranscribeParams {
+    #[serde(default = "default_true")]
+    diarize: bool,
+}
+
+fn default_true() -> bool { true }
+
 async fn transcribe(
     State(state): State<Arc<AppState>>,
+    Query(params): Query<TranscribeParams>,
     mut multipart: Multipart,
 ) -> Result<Json<TranscribeResponse>, (StatusCode, Json<ErrorResponse>)> {
     // Extract audio file from multipart
@@ -106,12 +115,13 @@ async fn transcribe(
     let t0 = Instant::now();
 
     // Run transcription in blocking task (holds the mutex)
+    let diarize = params.diarize;
     let result = {
         let wav = wav_path.clone();
         let state = Arc::clone(&state);
         tokio::task::spawn_blocking(move || {
             let mut engine = state.engine.blocking_lock();
-            engine.transcribe(&wav)
+            engine.transcribe_with_options(&wav, diarize)
         })
         .await
         .map_err(|e| internal(format!("task join error: {e}")))?

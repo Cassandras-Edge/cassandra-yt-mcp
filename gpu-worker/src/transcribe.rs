@@ -8,9 +8,8 @@ use tracing::info;
 
 /// Max seconds per TDT chunk — the ONNX model's relative position bias is
 /// exported with a fixed 1001-frame window. At 12.5 frames/sec (80ms/frame),
-/// that's ~80s max. Use 60s for safety. 480s produced 6001 frames which
-/// overflowed the 1001-frame bias tensor.
-const MAX_CHUNK_SECS: f32 = 60.0;
+/// that's ~80s max. 75s = 937 frames, safely under the limit.
+const MAX_CHUNK_SECS: f32 = 75.0;
 
 const SAMPLE_RATE: u32 = 16000;
 
@@ -51,34 +50,37 @@ impl TranscribeEngine {
     }
 
     pub fn transcribe(&mut self, wav_path: &Path) -> Result<TranscribeResult> {
+        self.transcribe_with_options(wav_path, true)
+    }
+
+    pub fn transcribe_with_options(&mut self, wav_path: &Path, diarize: bool) -> Result<TranscribeResult> {
         let (audio, spec) = load_wav(wav_path)?;
         let duration_secs = audio.len() as f32 / SAMPLE_RATE as f32;
-        info!(duration_secs = format!("{:.1}", duration_secs), "processing audio");
+        info!(duration_secs = format!("{:.1}", duration_secs), diarize, "processing audio");
 
         let t0 = Instant::now();
 
-        // Run diarization and transcription in parallel using scoped threads.
-        // Sortformer streams through the full audio while TDT chunks independently.
-        let audio_for_diar = audio.clone();
         let sr = spec.sample_rate;
         let ch = spec.channels;
 
-        // We need &mut self for both, so run diarization first in a separate scope
-        // with a clone of sortformer's input, then transcribe.
-        // True parallelism would need splitting the models into separate structs,
-        // but sequential with both on GPU is already fast since they don't compete.
-
-        // Step 1: Diarization
-        let t_diar = Instant::now();
-        let speaker_segments = self
-            .sortformer
-            .diarize(audio_for_diar, sr, ch)
-            .wrap_err("diarization failed")?;
-        info!(
-            speaker_segments = speaker_segments.len(),
-            elapsed_ms = t_diar.elapsed().as_millis(),
-            "diarization complete"
-        );
+        // Step 1: Diarization (optional)
+        let speaker_segments = if diarize {
+            let audio_for_diar = audio.clone();
+            let t_diar = Instant::now();
+            let segments = self
+                .sortformer
+                .diarize(audio_for_diar, sr, ch)
+                .wrap_err("diarization failed")?;
+            info!(
+                speaker_segments = segments.len(),
+                elapsed_ms = t_diar.elapsed().as_millis(),
+                "diarization complete"
+            );
+            segments
+        } else {
+            info!("diarization skipped");
+            Vec::new()
+        };
 
         // Step 2: Transcribe — chunk if needed
         let t_asr = Instant::now();

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
 from cassandra_yt_mcp.types import DownloadResult
+
+logger = logging.getLogger(__name__)
 
 
 class Downloader:
@@ -67,7 +70,23 @@ class Downloader:
             candidates = sorted(job_dir.iterdir())
         if not candidates:
             raise RuntimeError("Audio file was not produced by yt-dlp")
-        return DownloadResult(metadata=metadata, audio_path=str(candidates[0]))
+
+        audio_path = candidates[0]
+        # Pre-convert to 16kHz mono WAV so downstream skips ffmpeg
+        if audio_path.suffix != ".wav":
+            wav_path = audio_path.with_suffix(".wav")
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(audio_path),
+                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                 str(wav_path)],
+                capture_output=True, timeout=300,
+            )
+            if result.returncode == 0:
+                audio_path.unlink()
+                audio_path = wav_path
+                logger.info("Pre-converted to WAV: %s", wav_path.name)
+
+        return DownloadResult(metadata=metadata, audio_path=str(audio_path))
 
     def expand_playlist(self, url: str, cookies_file: Path | None = None) -> list[dict[str, object]]:
         """Expand a playlist URL into individual video entries (metadata only, no download)."""
