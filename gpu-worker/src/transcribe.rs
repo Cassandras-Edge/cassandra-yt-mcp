@@ -6,10 +6,10 @@ use parakeet_rs::sortformer::{DiarizationConfig, Sortformer, SpeakerSegment};
 use parakeet_rs::{ExecutionConfig, ExecutionProvider, ParakeetTDT, TimestampMode, Transcriber};
 use tracing::info;
 
-/// Max seconds per TDT chunk — TDT's attention window limits sequence length.
-/// At 16kHz with hop=80, the model's 1001-frame attention window ≈ 5s of audio.
-/// Use 60s chunks — the ONNX runtime handles internal windowing for longer
-/// sequences, but 480s overflows the attention buffer. 60s is a safe ceiling.
+/// Max seconds per TDT chunk — the ONNX model's relative position bias is
+/// exported with a fixed 1001-frame window. At 12.5 frames/sec (80ms/frame),
+/// that's ~80s max. Use 60s for safety. 480s produced 6001 frames which
+/// overflowed the 1001-frame bias tensor.
 const MAX_CHUNK_SECS: f32 = 60.0;
 
 const SAMPLE_RATE: u32 = 16000;
