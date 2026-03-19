@@ -12,7 +12,7 @@ export function registerMcpTools(server: McpServer, env: Env, auth: ResolvedAuth
   server.registerTool(
     "transcribe",
     {
-      description: "Queue a video for transcription. Supports any yt-dlp-compatible URL (YouTube, Twitch VODs/clips, Twitter/X, and 1000+ other sites). Also supports YouTube playlist URLs.",
+      description: "Queue a video for transcription. Supports any yt-dlp-compatible URL (YouTube, Twitch VODs/clips, Twitter/X, and 1000+ other sites). Also supports YouTube playlist URLs and live streams (grabs available content up to the current point).",
       annotations: { readOnlyHint: false, idempotentHint: true },
       inputSchema: { url: z.string().describe("The video URL to transcribe (YouTube, Twitch, Twitter/X, etc.)") },
     },

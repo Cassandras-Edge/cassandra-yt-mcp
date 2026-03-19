@@ -104,7 +104,8 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         description=(
             "Queue a video for transcription. Supports any yt-dlp-compatible URL "
             "(YouTube, Twitch VODs/clips, Twitter/X, and 1000+ other sites). "
-            "Also supports YouTube playlist URLs."
+            "Also supports YouTube playlist URLs and live streams (grabs available "
+            "content up to the current point)."
         ),
     )
     def transcribe(
