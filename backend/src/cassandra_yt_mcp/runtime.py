@@ -538,6 +538,13 @@ def _is_transient_error(exc: Exception) -> bool:
     return any(p in msg for p in transient_patterns)
 
 
+_SENSITIVE_FIELDS = frozenset({"cookies_b64", "cookies", "api_key", "token"})
+
+
+def _strip_sensitive(job: dict) -> dict:
+    return {k: v for k, v in job.items() if k not in _SENSITIVE_FIELDS}
+
+
 def _as_str(value: object) -> str | None:
     if value is None:
         return None
@@ -725,14 +732,14 @@ class AppRuntime:
             refreshed = self.jobs.get(job_id) or job
             poll_count = int(refreshed.get("poll_count") or 0)
             payload: dict[str, object] = {
-                **refreshed,
+                **_strip_sensitive(refreshed),
                 "retry_after": min(5 * (2 ** (poll_count // 3)), 60),
             }
             if refreshed.get("retry_after"):
                 payload["waiting_until"] = refreshed["retry_after"]
                 payload["attempt"] = int(refreshed.get("attempt") or 0)
             return payload
-        return job
+        return _strip_sensitive(job)
 
 
 class DownloaderRuntime:
