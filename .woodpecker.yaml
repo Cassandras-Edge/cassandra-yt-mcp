@@ -45,7 +45,7 @@ steps:
     commands:
       - >
         buildctl
-        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        --addr tcp://buildkitd.infra.svc.cluster.local:1234
         build
         --frontend dockerfile.v0
         --local context=backend
@@ -61,7 +61,7 @@ steps:
       - event: push
         branch: main
     commands:
-      - kubectl rollout restart deployment cassandra-yt-mcp -n cassandra-yt-mcp
+      - kubectl rollout restart deployment cassandra-yt-mcp -n production
 
   # ── Cron: rebuild coordinator with latest yt-dlp stable (no cache) ──
 
@@ -76,7 +76,7 @@ steps:
     commands:
       - >
         buildctl
-        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        --addr tcp://buildkitd.infra.svc.cluster.local:1234
         build
         --frontend dockerfile.v0
         --local context=backend
@@ -95,7 +95,7 @@ steps:
     commands:
       - >
         buildctl
-        --addr tcp://buildkitd.buildkitd.svc.cluster.local:1234
+        --addr tcp://buildkitd.infra.svc.cluster.local:1234
         build
         --frontend dockerfile.v0
         --local context=gpu-worker
@@ -108,7 +108,7 @@ steps:
       - event: push
         branch: main
     commands:
-      - kubectl rollout restart deployment cassandra-yt-mcp-worker -n cassandra-yt-mcp
+      - kubectl rollout restart deployment cassandra-yt-mcp-worker -n production
 
   # ── Deploy: CF Worker (push to main, only when worker/ changed) ──
 
