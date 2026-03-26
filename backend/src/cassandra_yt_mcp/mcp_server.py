@@ -12,7 +12,7 @@ from fastmcp.server.auth import AccessToken
 from fastmcp.server.context import Context
 
 from cassandra_yt_mcp.acl import Enforcer, load_enforcer
-from cassandra_yt_mcp.auth import McpKeyAuthProvider
+from cassandra_yt_mcp.auth import McpKeyAuthProvider, build_auth
 from cassandra_yt_mcp.config import Settings
 from cassandra_yt_mcp.runtime import AppRuntime
 
@@ -64,11 +64,24 @@ def _check_acl(enforcer: Enforcer, email: str, tool_name: str) -> None:
 def create_mcp_server(settings: Settings) -> FastMCP:
     """Create and configure the FastMCP server with all tools."""
 
-    auth_provider = McpKeyAuthProvider(
-        acl_url=settings.auth_url,
-        acl_secret=settings.auth_secret,
-        service_id=SERVICE_ID,
-    )
+    mcp_key_provider: McpKeyAuthProvider | None = None
+    if settings.workos_client_id and settings.workos_client_secret and settings.workos_authkit_domain and settings.base_url:
+        auth_provider, mcp_key_provider = build_auth(
+            acl_url=settings.auth_url,
+            acl_secret=settings.auth_secret,
+            service_id=SERVICE_ID,
+            base_url=settings.base_url,
+            workos_client_id=settings.workos_client_id,
+            workos_client_secret=settings.workos_client_secret,
+            workos_authkit_domain=settings.workos_authkit_domain,
+        )
+    else:
+        mcp_key_provider = McpKeyAuthProvider(
+            acl_url=settings.auth_url,
+            acl_secret=settings.auth_secret,
+            service_id=SERVICE_ID,
+        )
+        auth_provider = mcp_key_provider
 
     # Load ACL enforcer from bundled acl.yaml
     acl_path = Path(settings.auth_yaml_path)
@@ -82,7 +95,8 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             yield {"runtime": runtime, "enforcer": enforcer}
         finally:
             runtime.close()
-            auth_provider.close()
+            if mcp_key_provider is not None:
+                mcp_key_provider.close()
 
     mcp = FastMCP(
         name="Cassandra YT MCP",
