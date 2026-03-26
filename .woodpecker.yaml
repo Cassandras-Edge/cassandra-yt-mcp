@@ -43,16 +43,14 @@ steps:
         branch: main
     commands:
       - |
+        apk add --no-cache curl
         TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        APISERVER=https://kubernetes.default.svc
         NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        wget -qO- \
-          --header="Authorization: Bearer $TOKEN" \
-          --header="Content-Type: application/strategic-merge-patch+json" \
-          --method=PATCH \
-          --body-data="{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kubectl.kubernetes.io/restartedAt\":\"$NOW\"}}}}}" \
-          --no-check-certificate \
-          "$APISERVER/apis/apps/v1/namespaces/production/deployments/cassandra-yt-mcp"
+        curl -sk -X PATCH \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/strategic-merge-patch+json" \
+          -d "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kubectl.kubernetes.io/restartedAt\":\"$NOW\"}}}}}" \
+          "https://kubernetes.default.svc/apis/apps/v1/namespaces/production/deployments/cassandra-yt-mcp"
 
   # ── Cron: rebuild with latest yt-dlp stable (no cache) ──
 
