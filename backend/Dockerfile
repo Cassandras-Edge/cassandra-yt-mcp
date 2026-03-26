@@ -5,7 +5,7 @@ ARG YTDLP_CHANNEL=stable
 ARG AUTH_YAML_CONTENT=""
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg curl ca-certificates git \
+      ffmpeg curl ca-certificates git nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -18,7 +18,8 @@ RUN set -eux; \
     fi; \
     curl -fsSL "$YTDLP_URL" -o /usr/local/bin/yt-dlp; \
     chmod +x /usr/local/bin/yt-dlp; \
-    yt-dlp --version
+    yt-dlp --version; \
+    yt-dlp --remote-components ejs:github
 
 RUN groupadd -g 1001 app && useradd -u 1001 -g app -s /bin/bash -m app
 
