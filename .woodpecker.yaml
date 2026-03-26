@@ -34,7 +34,7 @@ steps:
         --local dockerfile=backend
         --opt build-arg:YTDLP_CHANNEL=stable
         --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
-        --output type=image,name=172.20.0.161:30500/cassandra-yt-mcp/backend:latest,push=true,registry.insecure=true
+        --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-yt-mcp/backend:latest,push=true,registry.insecure=true
 
   - name: restart-backend
     image: bitnami/kubectl:latest
@@ -65,4 +65,4 @@ steps:
         --opt build-arg:YTDLP_CHANNEL=stable
         --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
         --opt no-cache=
-        --output type=image,name=172.20.0.161:30500/cassandra-yt-mcp/backend:latest,push=true,registry.insecure=true
+        --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-yt-mcp/backend:latest,push=true,registry.insecure=true
