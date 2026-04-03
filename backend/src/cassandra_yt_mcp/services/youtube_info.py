@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from cassandra_yt_mcp.utils.url import is_youtube_url
+
+logger = logging.getLogger(__name__)
 
 
 class YouTubeInfoService:
@@ -39,11 +42,18 @@ class YouTubeInfoService:
         effective_cookies = cookies_file or self.cookies_file
         if effective_cookies:
             cmd = [*cmd, "--cookies", str(effective_cookies)]
+        logger.debug("yt-dlp exec: %s (timeout=%ds)", " ".join(cmd[:4]) + " ...", timeout)
         try:
             completed = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"yt-dlp timed out after {timeout} seconds") from exc
+            partial_stderr = (exc.stderr or "").strip() if exc.stderr else ""
+            logger.error("yt-dlp timed out after %ds | stderr=%s | cmd=%s", timeout, partial_stderr or "(none)", " ".join(cmd))
+            msg = f"yt-dlp timed out after {timeout} seconds"
+            if partial_stderr:
+                msg += f" | stderr: {partial_stderr[:500]}"
+            raise RuntimeError(msg) from exc
         if completed.returncode != 0:
+            logger.error("yt-dlp failed (rc=%d) | stderr=%s | cmd=%s", completed.returncode, completed.stderr.strip(), " ".join(cmd))
             raise RuntimeError(completed.stderr.strip() or "yt-dlp failed")
         return completed
 
@@ -58,6 +68,7 @@ class YouTubeInfoService:
                 "--no-warnings",
                 "--quiet",
             ],
+            timeout=90,
             cookies_file=cookies_file,
         )
         results: list[dict[str, Any]] = []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -358,13 +359,18 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
         limit = max(1, min(limit, 25))
         cookies_file = _write_cookies_to_temp(token, ctx)
+        t0 = time.monotonic()
         try:
             results = runtime.youtube_info.search(query=query, limit=limit, cookies_file=cookies_file)
         except RuntimeError as exc:
-            return {"error": "search_failed", "message": str(exc)}
+            elapsed = time.monotonic() - t0
+            logger.error("yt_search failed after %.1fs | query=%r limit=%d | %s", elapsed, query, limit, exc)
+            return {"error": "search_failed", "message": str(exc), "elapsed_seconds": round(elapsed, 1)}
         finally:
             if cookies_file and cookies_file.exists():
                 cookies_file.unlink()
+        elapsed = time.monotonic() - t0
+        logger.info("yt_search ok in %.1fs | query=%r limit=%d results=%d", elapsed, query, limit, len(results))
         return {"query": query, "count": len(results), "results": results}
 
     # ── Tool: list_channel_videos ──
