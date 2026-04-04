@@ -93,14 +93,13 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     """Create and configure the FastMCP server with all tools."""
 
     mcp_key_provider: McpKeyAuthProvider | None = None
-    if settings.workos_client_id and settings.workos_client_secret and settings.workos_authkit_domain and settings.base_url:
+    if settings.workos_client_id and settings.workos_authkit_domain and settings.base_url:
         auth_provider, mcp_key_provider = build_auth(
             acl_url=settings.auth_url,
             acl_secret=settings.auth_secret,
             service_id=SERVICE_ID,
             base_url=settings.base_url,
             workos_client_id=settings.workos_client_id,
-            workos_client_secret=settings.workos_client_secret,
             workos_authkit_domain=settings.workos_authkit_domain,
         )
     else:

@@ -377,7 +377,7 @@ wheels = [
 [[package]]
 name = "cassandra-mcp-auth"
 version = "0.1.0"
-source = { git = "https://github.com/DigiBugCat/cassandra-auth.git?subdirectory=python&rev=bed3ab9#bed3ab9f074a0285e46ba11206a6a819126769f8" }
+source = { git = "https://github.com/Cassandras-Edge/cassandra-auth.git?subdirectory=python#53f5f1880fb5ed4adc03208619e5da352ec62afa" }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
@@ -420,7 +420,7 @@ onnx = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cassandra-mcp-auth", git = "https://github.com/DigiBugCat/cassandra-auth.git?subdirectory=python&rev=bed3ab9" },
+    { name = "cassandra-mcp-auth", git = "https://github.com/Cassandras-Edge/cassandra-auth.git?subdirectory=python" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "nemo-toolkit", extras = ["asr"], marker = "extra == 'gpu'", specifier = ">=2.0.0" },

@@ -21,7 +21,6 @@ class Settings:
     auth_yaml_path: str
     base_url: str
     workos_client_id: str
-    workos_client_secret: str
     workos_authkit_domain: str
 
 
@@ -56,6 +55,5 @@ def load_settings() -> Settings:
         auth_yaml_path=os.getenv("AUTH_YAML_PATH", "/app/acl.yaml"),
         base_url=os.getenv("BASE_URL", "").strip(),
         workos_client_id=os.getenv("WORKOS_CLIENT_ID", "").strip(),
-        workos_client_secret=os.getenv("WORKOS_CLIENT_SECRET", "").strip(),
         workos_authkit_domain=os.getenv("WORKOS_AUTHKIT_DOMAIN", "").strip(),
     )
