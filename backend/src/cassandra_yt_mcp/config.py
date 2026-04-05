@@ -22,6 +22,7 @@ class Settings:
     base_url: str
     workos_client_id: str
     workos_authkit_domain: str
+    code_mode: bool
 
 
 def _as_int(name: str, default: int) -> int:
@@ -56,4 +57,5 @@ def load_settings() -> Settings:
         base_url=os.getenv("BASE_URL", "").strip(),
         workos_client_id=os.getenv("WORKOS_CLIENT_ID", "").strip(),
         workos_authkit_domain=os.getenv("WORKOS_AUTHKIT_DOMAIN", "").strip(),
+        code_mode=os.getenv("CODE_MODE", "true").lower() in ("true", "1", "yes"),
     )

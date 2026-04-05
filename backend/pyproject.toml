@@ -9,7 +9,7 @@ description = "Private backend API for Cassandra YT MCP"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "cassandra-mcp-auth @ git+https://github.com/Cassandras-Edge/cassandra-auth.git@79efa8a#subdirectory=python",
+  "cassandra-mcp-auth @ git+https://github.com/Cassandras-Edge/cassandra-auth.git@ed57186#subdirectory=python",
   "fastmcp>=3.2.0",
   "fastapi>=0.135.1",
   "httpx>=0.28.1",

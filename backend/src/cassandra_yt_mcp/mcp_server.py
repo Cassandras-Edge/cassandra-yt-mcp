@@ -12,7 +12,7 @@ from fastmcp.dependencies import CurrentAccessToken
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.context import Context
 
-from cassandra_mcp_auth import AclMiddleware
+from cassandra_mcp_auth import AclMiddleware, DiscoveryTransform
 from cassandra_yt_mcp.auth import McpKeyAuthProvider, build_auth
 from cassandra_yt_mcp.config import Settings
 from cassandra_yt_mcp.runtime import AppRuntime
@@ -128,6 +128,8 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         "lifespan": lifespan,
         "middleware": [acl_mw] if acl_mw._enabled else [],  # noqa: SLF001
     }
+    if settings.code_mode:
+        mcp_kwargs["transforms"] = [DiscoveryTransform()]
     if auth_provider:
         mcp_kwargs["auth"] = auth_provider
 
