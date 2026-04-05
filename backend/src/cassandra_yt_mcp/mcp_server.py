@@ -136,6 +136,11 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         lifespan=lifespan,
     )
 
+    # ── Service API (gateway-facing REST routes) ──
+    from cassandra_yt_mcp.service_api import register_service_api  # noqa: PLC0415
+
+    register_service_api(mcp, settings, _state)
+
     # ── Health check ──
 
     @mcp.custom_route("/healthz", methods=["GET"])
