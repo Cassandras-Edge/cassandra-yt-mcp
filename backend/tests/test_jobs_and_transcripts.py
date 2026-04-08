@@ -22,7 +22,6 @@ def make_settings(tmp_path: Path) -> Settings:
         base_url="",
         workos_client_id="",
         workos_authkit_domain="",
-        code_mode=True,
     )
 
 

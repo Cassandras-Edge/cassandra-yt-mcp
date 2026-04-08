@@ -12,7 +12,7 @@ from fastmcp.dependencies import CurrentAccessToken
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.context import Context
 
-from cassandra_mcp_auth import AclMiddleware, DiscoveryTransform
+from cassandra_mcp_auth import AclMiddleware
 from cassandra_yt_mcp.auth import McpKeyAuthProvider, build_auth
 from cassandra_yt_mcp.config import Settings
 from cassandra_yt_mcp.runtime import AppRuntime
@@ -139,32 +139,11 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             "- The user's Watch Later queue\n\n"
             "Transcription is async: `transcribe(url)` returns a `job_id`, poll "
             "`job_status(job_id)` until done, then `read_transcript(video_id)` for "
-            "the text. Already-transcribed videos return instantly.\n\n"
-            "## How this works\n\n"
-            "This is a DISCOVERY server — it tells you what tools exist and how to "
-            "call them. To actually execute a tool, use the cassandra-gateway server.\n\n"
-            "### Step 1: Find tools (this server)\n"
-            "Call `cass_yt_search` to look up tools and get their full parameter schemas.\n\n"
-            "```\n"
-            "cass_yt_search(\n"
-            "  query: str,           # what you're looking for, e.g. 'transcribe' or 'comments'\n"
-            "  tags: list[str]=None, # optional tag filter\n"
-            "  detail: str='full',   # 'brief' for names only, 'detailed' for markdown, 'full' for JSON schemas\n"
-            "  limit: int=None       # max results\n"
-            ")\n"
-            "```\n\n"
-            "### Step 2: Execute tools (cassandra-gateway server)\n"
-            "Take the tool name and params from step 1, then call `cass_gateway_run` "
-            "on the cassandra-gateway server:\n\n"
-            "```\n"
-            "cass_gateway_run(code=\"return await call_tool('transcribe', {'url': 'https://youtube.com/watch?v=...'})\")\n"
-            "```"
+            "the text. Already-transcribed videos return instantly."
         ),
         "lifespan": lifespan,
         "middleware": [acl_mw] if acl_mw._enabled else [],  # noqa: SLF001
     }
-    if settings.code_mode:
-        mcp_kwargs["transforms"] = [DiscoveryTransform(service_id=SERVICE_ID)]
     if auth_provider:
         mcp_kwargs["auth"] = auth_provider
 
