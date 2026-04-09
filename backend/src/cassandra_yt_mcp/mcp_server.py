@@ -42,41 +42,18 @@ def _get_email(token: AccessToken | None) -> str:
     return token.claims.get("email", "")
 
 
-def _get_credentials(token: AccessToken, ctx: Context | None = None) -> dict[str, str]:
-    """Get credentials from token claims (mcp_ key path) or fetch from auth service (WorkOS path)."""
-    creds = token.claims.get("credentials", {})
-    if creds:
-        return creds
+def _get_credentials(token: AccessToken) -> dict[str, str]:
+    """Get per-user credentials from token claims.
 
-    # WorkOS tokens don't carry credentials — fetch from auth service
-    if ctx is None:
-        return {}
-    auth_url = ctx.lifespan_context.get("auth_url")
-    auth_secret = ctx.lifespan_context.get("auth_secret")
-    if not auth_url or not auth_secret:
-        return {}
-
-    email = _get_email(token)
-    if not email:
-        return {}
-
-    try:
-        import httpx  # noqa: PLC0415
-        resp = httpx.get(
-            f"{auth_url}/credentials/{email}/{SERVICE_ID}",
-            headers={"X-Auth-Secret": auth_secret},
-            timeout=5,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("credentials") or {}
-    except Exception:  # noqa: BLE001
-        logger.warning("Failed to fetch credentials from auth service for %s", email)
-    return {}
+    Both mcp_ keys and WorkOS OAuth tokens carry credentials in claims —
+    the auth layer (McpKeyAuthProvider / UserInfoEnrichingVerifier) handles
+    fetching them from the auth service.
+    """
+    return token.claims.get("credentials", {})
 
 
-def _get_youtube_cookies(token: AccessToken, ctx: Context | None = None) -> str | None:
-    creds = _get_credentials(token, ctx)
-    return creds.get("youtube_cookies") or None
+def _get_youtube_cookies(token: AccessToken) -> str | None:
+    return _get_credentials(token).get("youtube_cookies") or None
 
 
 def _is_youtube_url(url: str) -> bool:
@@ -116,7 +93,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         runtime.start()
         _state["runtime"] = runtime
         try:
-            yield {"runtime": runtime, "auth_url": settings.auth_url, "auth_secret": settings.auth_secret}
+            yield {"runtime": runtime}
         finally:
             _state.clear()
             runtime.close()
@@ -204,7 +181,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
         cookies_b64 = None
         if _is_youtube_url(url):
-            cookies_b64 = _get_youtube_cookies(token, ctx)
+            cookies_b64 = _get_youtube_cookies(token)
 
         return runtime.enqueue_transcription(url, cookies_b64=cookies_b64)
 
@@ -278,7 +255,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         if transcript is None:
             # Auto-queue: treat video_id as URL if it looks like one, otherwise build YouTube URL
             url = video_id if video_id.startswith("http") else f"https://www.youtube.com/watch?v={video_id}"
-            cookies_b64 = _get_youtube_cookies(token, ctx) if _is_youtube_url(url) else None
+            cookies_b64 = _get_youtube_cookies(token) if _is_youtube_url(url) else None
             job = runtime.enqueue_transcription(url, cookies_b64=cookies_b64)
             return {
                 "queued": True,
@@ -445,7 +422,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
     ) -> dict:
         runtime: AppRuntime = ctx.lifespan_context["runtime"]
 
-        cookies = _get_youtube_cookies(token, ctx)
+        cookies = _get_youtube_cookies(token)
         if not cookies:
             return {
                 "error": "no_cookies",
@@ -494,7 +471,7 @@ def create_mcp_server(settings: Settings) -> FastMCP:
 
 def _write_cookies_to_temp(token: AccessToken, ctx: Context | None = None) -> Path | None:
     """Decode YouTube cookies from token credentials to a temp file."""
-    cookies_b64 = _get_youtube_cookies(token, ctx)
+    cookies_b64 = _get_youtube_cookies(token)
     if not cookies_b64:
         return None
 
