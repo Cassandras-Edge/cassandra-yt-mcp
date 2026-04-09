@@ -28,8 +28,11 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 
 # Install deps from pyproject.toml with stub package
-RUN mkdir -p src/cassandra_yt_mcp && touch src/cassandra_yt_mcp/__init__.py \
- && pip install --no-cache-dir "."
+ARG GITHUB_TOKEN=""
+RUN if [ -n "$GITHUB_TOKEN" ]; then printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > /root/.netrc && chmod 600 /root/.netrc; fi \
+ && mkdir -p src/cassandra_yt_mcp && touch src/cassandra_yt_mcp/__init__.py \
+ && pip install --no-cache-dir "." \
+ && rm -f /root/.netrc
 
 # Copy actual source
 COPY --chown=app:app src ./src

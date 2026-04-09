@@ -8,8 +8,12 @@ steps:
     image: python:3.12-slim
     when:
       - event: [push, pull_request]
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
       - apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+      - if [ -n "$GITHUB_TOKEN" ]; then printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > ~/.netrc && chmod 600 ~/.netrc; fi
       - cd backend
       - pip install -e ".[dev]"
       - pytest
@@ -24,6 +28,8 @@ steps:
     environment:
       AUTH_YAML_CONTENT:
         from_secret: auth_yaml
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
       - >
         buildctl
@@ -34,6 +40,7 @@ steps:
         --local dockerfile=backend
         --opt build-arg:YTDLP_CHANNEL=stable
         --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
+        --opt "build-arg:GITHUB_TOKEN=$GITHUB_TOKEN"
         --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-media-mcp/backend:latest,push=true,registry.insecure=true
 
   - name: restart-backend
@@ -62,6 +69,8 @@ steps:
     environment:
       AUTH_YAML_CONTENT:
         from_secret: auth_yaml
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
       - >
         buildctl
@@ -72,6 +81,7 @@ steps:
         --local dockerfile=backend
         --opt build-arg:YTDLP_CHANNEL=stable
         --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
+        --opt "build-arg:GITHUB_TOKEN=$GITHUB_TOKEN"
         --opt no-cache=
         --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-media-mcp/backend:latest,push=true,registry.insecure=true
 
