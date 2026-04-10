@@ -2,25 +2,30 @@ when:
   - event: [push, pull_request, cron]
 
 steps:
-  # ── CI: tests (all branches, push + PR) ──
+  - name: ci-scripts
+    image: alpine:3.21
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - mkdir -p .ci
+      - 'wget -qO .ci/build.sh --header "Authorization: token $GITHUB_TOKEN" https://raw.githubusercontent.com/Cassandras-Edge/cassandra-stack/main/scripts/ci-build.sh'
+      - 'wget -qO .ci/notify.sh --header "Authorization: token $GITHUB_TOKEN" https://raw.githubusercontent.com/Cassandras-Edge/cassandra-stack/main/scripts/ci-notify.sh'
+      - chmod +x .ci/build.sh .ci/notify.sh
 
-  - name: backend-test
-    image: python:3.12-slim
+  - name: test
+    image: ghcr.io/astral-sh/uv:python3.13-alpine
     when:
       - event: [push, pull_request]
     environment:
       GITHUB_TOKEN:
         from_secret: github_token
     commands:
-      - apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
-      - if [ -n "$GITHUB_TOKEN" ]; then printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > ~/.netrc && chmod 600 ~/.netrc; fi
-      - cd backend
-      - pip install -e ".[dev]"
-      - pytest
+      - apk add --no-cache git
+      - printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$GITHUB_TOKEN" > ~/.netrc && chmod 600 ~/.netrc
+      - cd backend && uv sync --extra dev && uv run pytest
 
-  # ── Deploy: Docker image via BuildKit (push to main only) ──
-
-  - name: build-backend
+  - name: deploy
     image: moby/buildkit:v0.21.1
     when:
       - event: push
@@ -31,36 +36,9 @@ steps:
       GITHUB_TOKEN:
         from_secret: github_token
     commands:
-      - >
-        buildctl
-        --addr tcp://buildkitd.infra.svc.cluster.local:1234
-        build
-        --frontend dockerfile.v0
-        --local context=backend
-        --local dockerfile=backend
-        --opt build-arg:YTDLP_CHANNEL=stable
-        --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
-        --opt "build-arg:GITHUB_TOKEN=$GITHUB_TOKEN"
-        --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-media-mcp/backend:latest,push=true,registry.insecure=true
+      - sh .ci/build.sh cassandra-media-mcp/backend media-mcp backend --build-arg YTDLP_CHANNEL=stable
 
-  - name: restart-backend
-    image: moby/buildkit:v0.21.1
-    when:
-      - event: push
-        branch: main
-    commands:
-      - |
-        apk add --no-cache curl
-        TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-        NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        curl -sk -X PATCH \
-          -H "Authorization: Bearer $TOKEN" \
-          -H "Content-Type: application/strategic-merge-patch+json" \
-          -d "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kubectl.kubernetes.io/restartedAt\":\"$NOW\"}}}}}" \
-          "https://kubernetes.default.svc/apis/apps/v1/namespaces/production/deployments/media-mcp"
-
-  # ── Cron: rebuild with latest yt-dlp stable (no cache) ──
-
+  # Cron: rebuild with latest yt-dlp stable (no cache)
   - name: rebuild-ytdlp
     image: moby/buildkit:v0.21.1
     when:
@@ -72,45 +50,24 @@ steps:
       GITHUB_TOKEN:
         from_secret: github_token
     commands:
-      - >
-        buildctl
-        --addr tcp://buildkitd.infra.svc.cluster.local:1234
-        build
-        --frontend dockerfile.v0
-        --local context=backend
-        --local dockerfile=backend
-        --opt build-arg:YTDLP_CHANNEL=stable
-        --opt "build-arg:AUTH_YAML_CONTENT=$AUTH_YAML_CONTENT"
-        --opt "build-arg:GITHUB_TOKEN=$GITHUB_TOKEN"
-        --opt no-cache=
-        --output type=image,name=registry.infra.svc.cluster.local:5000/cassandra-media-mcp/backend:latest,push=true,registry.insecure=true
+      - sh .ci/build.sh cassandra-media-mcp/backend media-mcp backend --no-cache --build-arg YTDLP_CHANNEL=stable
 
   - name: notify-success
-    image: moby/buildkit:v0.21.1
+    image: alpine:3.21
     when:
       - status: success
     environment:
       DISCORD_WEBHOOK_URL:
         from_secret: discord_webhook_url
     commands:
-      - apk add --no-cache curl
-      - >
-        curl -sf --connect-timeout 5 --max-time 15
-        -H "Content-Type: application/json"
-        -d "{\"embeds\":[{\"title\":\"✅ $CI_REPO #$CI_PIPELINE_NUMBER\",\"description\":\"**Branch:** $CI_COMMIT_BRANCH\n**Commit:** \`$(echo $CI_COMMIT_SHA | cut -c1-7)\`\",\"color\":3066993,\"url\":\"$CI_PIPELINE_URL\"}]}"
-        "$DISCORD_WEBHOOK_URL" || true
+      - sh .ci/notify.sh success
 
   - name: notify-failure
-    image: moby/buildkit:v0.21.1
+    image: alpine:3.21
     when:
       - status: failure
     environment:
       DISCORD_WEBHOOK_URL:
         from_secret: discord_webhook_url
     commands:
-      - apk add --no-cache curl
-      - >
-        curl -sf --connect-timeout 5 --max-time 15
-        -H "Content-Type: application/json"
-        -d "{\"embeds\":[{\"title\":\"❌ $CI_REPO #$CI_PIPELINE_NUMBER\",\"description\":\"**Branch:** $CI_COMMIT_BRANCH\n**Commit:** \`$(echo $CI_COMMIT_SHA | cut -c1-7)\`\",\"color\":15158332,\"url\":\"$CI_PIPELINE_URL\"}]}"
-        "$DISCORD_WEBHOOK_URL" || true
+      - sh .ci/notify.sh failure
