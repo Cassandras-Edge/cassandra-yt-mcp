@@ -145,6 +145,14 @@ class JobsRepository:
             self.db.conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
             self.db.conn.commit()
 
+    def update_download_progress(self, job_id: str, progress_json: str) -> None:
+        with self.db.lock:
+            self.db.conn.execute(
+                "UPDATE jobs SET download_progress = ? WHERE id = ?",
+                (progress_json, job_id),
+            )
+            self.db.conn.commit()
+
     def mark_completed(self, job_id: str, video_id: str, result_path: str) -> None:
         with self.db.lock:
             self.db.conn.execute(

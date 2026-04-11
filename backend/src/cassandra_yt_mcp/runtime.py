@@ -119,9 +119,18 @@ class BackgroundWorker:
         # Download phase
         cookies_file = _write_temp_cookies(cookies_b64, self.downloader.work_root.parent) if cookies_b64 else None
         jobs_in_progress.labels(phase="downloading").inc()
+
+        def _on_progress(progress: dict[str, object]) -> None:
+            try:
+                self.jobs.update_download_progress(job_id, json.dumps(progress))
+            except Exception:  # noqa: BLE001
+                pass  # non-critical, don't fail the job
+
         try:
             t0 = time.monotonic()
-            download = self.downloader.download(url=url, job_id=job_id, cookies_file=cookies_file)
+            download = self.downloader.download(
+                url=url, job_id=job_id, cookies_file=cookies_file, on_progress=_on_progress,
+            )
             download_duration_seconds.observe(time.monotonic() - t0)
         finally:
             jobs_in_progress.labels(phase="downloading").dec()
@@ -450,6 +459,13 @@ class AppRuntime:
             if refreshed.get("retry_after"):
                 payload["waiting_until"] = refreshed["retry_after"]
                 payload["attempt"] = int(refreshed.get("attempt") or 0)
+            # Include download progress when available
+            progress_raw = refreshed.get("download_progress")
+            if progress_raw:
+                try:
+                    payload["download_progress"] = json.loads(str(progress_raw))
+                except (json.JSONDecodeError, TypeError):
+                    pass
             return payload
         return _strip_sensitive(job)
 

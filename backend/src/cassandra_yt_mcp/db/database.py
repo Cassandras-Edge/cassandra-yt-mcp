@@ -117,6 +117,9 @@ class Database:
         if "cookies_b64" not in columns:
             self._conn.execute("ALTER TABLE jobs ADD COLUMN cookies_b64 TEXT")
             self._conn.commit()
+        if "download_progress" not in columns:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN download_progress TEXT")
+            self._conn.commit()
 
     def close(self) -> None:
         with self._lock:

@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from cassandra_yt_mcp.types import DownloadResult
 
 logger = logging.getLogger(__name__)
+
+# Matches yt-dlp progress lines like:
+# [download]  45.2% of  10.50MiB at  2.50MiB/s ETA 00:04
+# [download]  45.2% of ~  10.50MiB at  2.50MiB/s ETA 00:04 (frag 3/7)
+_PROGRESS_RE = re.compile(
+    r"\[download\]\s+(?P<percent>[\d.]+)%\s+of\s+~?\s*(?P<total>\S+)"
+    r"\s+at\s+(?P<speed>\S+)"
+    r"\s+ETA\s+(?P<eta>\S+)"
+    r"(?:\s+\(frag\s+(?P<frag_current>\d+)/(?P<frag_total>\d+)\))?"
+)
+
+ProgressCallback = Callable[[dict[str, object]], None]
 
 
 class Downloader:
@@ -16,7 +30,14 @@ class Downloader:
         self.work_root.mkdir(parents=True, exist_ok=True)
         self.cookies_file = cookies_file
 
-    def download(self, *, url: str, job_id: str, cookies_file: Path | None = None) -> DownloadResult:
+    def download(
+        self,
+        *,
+        url: str,
+        job_id: str,
+        cookies_file: Path | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> DownloadResult:
         job_dir = self.work_root / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         output_template = str(job_dir / "%(id)s.%(ext)s")
@@ -38,6 +59,7 @@ class Downloader:
                 "--print-json",
                 "--no-playlist",
                 "--no-warnings",
+                "--newline",  # print progress on new lines instead of \r
                 "--concurrent-fragments",
                 "16",
                 "--live-from-start",
@@ -51,7 +73,7 @@ class Downloader:
             cmd.append(url)
 
             try:
-                completed = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=600)
+                stdout, stderr, returncode = self._run_with_progress(cmd, on_progress, timeout=600)
             except subprocess.TimeoutExpired:
                 # For live streams: timeout means we grabbed what was available
                 logger.info("yt-dlp timed out (likely live stream), merging fragments")
@@ -60,13 +82,13 @@ class Downloader:
                     return DownloadResult(metadata={}, audio_path=str(merged))
                 raise RuntimeError("yt-dlp timed out with no usable output")
 
-            if completed.returncode == 0:
+            if returncode == 0:
                 break
-            last_error = completed.stderr.strip() or "yt-dlp failed"
+            last_error = stderr.strip() or "yt-dlp failed"
         else:
             raise RuntimeError(last_error)
 
-        metadata = self._parse_last_json_line(completed.stdout)
+        metadata = self._parse_last_json_line(stdout)
         video_id = str(metadata.get("id", "")).strip()
         if not video_id:
             raise RuntimeError("yt-dlp did not return video ID")
@@ -136,6 +158,63 @@ class Downloader:
         if not entries:
             raise RuntimeError("No videos found in playlist")
         return entries
+
+    @staticmethod
+    def _run_with_progress(
+        cmd: list[str],
+        on_progress: ProgressCallback | None,
+        timeout: int,
+    ) -> tuple[str, str, int]:
+        """Run yt-dlp, streaming stderr for progress updates.
+
+        Returns (stdout, stderr, returncode).
+        """
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        stderr_lines: list[str] = []
+        import selectors  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stderr, selectors.EVENT_READ)
+        deadline = _time.monotonic() + timeout
+
+        while True:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(cmd, timeout)
+
+            events = sel.select(timeout=min(remaining, 2.0))
+            if events:
+                line = proc.stderr.readline()
+                if not line:
+                    break
+                stderr_lines.append(line)
+                if on_progress:
+                    m = _PROGRESS_RE.search(line)
+                    if m:
+                        progress: dict[str, object] = {
+                            "percent": float(m.group("percent")),
+                            "total_size": m.group("total"),
+                            "speed": m.group("speed"),
+                            "eta": m.group("eta"),
+                        }
+                        if m.group("frag_current"):
+                            progress["fragment"] = f"{m.group('frag_current')}/{m.group('frag_total')}"
+                        on_progress(progress)
+            elif proc.poll() is not None:
+                # Process exited, drain remaining stderr
+                for line in proc.stderr:
+                    stderr_lines.append(line)
+                break
+
+        sel.close()
+        stdout = proc.stdout.read()
+        proc.wait()
+        return stdout, "".join(stderr_lines), proc.returncode
 
     @staticmethod
     def _merge_fragments(job_dir: Path) -> Path | None:
