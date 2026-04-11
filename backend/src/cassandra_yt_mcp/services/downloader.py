@@ -39,7 +39,7 @@ class Downloader:
                 "--no-playlist",
                 "--no-warnings",
                 "--concurrent-fragments",
-                "4",
+                "16",
                 "--live-from-start",
                 *fmt_args,
                 "-o",
