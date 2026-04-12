@@ -168,19 +168,24 @@ class Downloader:
         """Run yt-dlp, streaming stderr for progress updates.
 
         Returns (stdout, stderr, returncode).
+        Monitors both stdout and stderr to prevent pipe buffer deadlocks
+        (e.g. when PO token plugins write verbose output to stdout).
         """
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        stdout_chunks: list[str] = []
         stderr_lines: list[str] = []
         import selectors  # noqa: PLC0415
         import time as _time  # noqa: PLC0415
 
         sel = selectors.DefaultSelector()
-        sel.register(proc.stderr, selectors.EVENT_READ)
+        sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+        sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
         deadline = _time.monotonic() + timeout
+        open_streams = 2
 
-        while True:
+        while open_streams > 0:
             remaining = deadline - _time.monotonic()
             if remaining <= 0:
                 proc.kill()
@@ -189,32 +194,39 @@ class Downloader:
 
             events = sel.select(timeout=min(remaining, 2.0))
             if events:
-                line = proc.stderr.readline()
-                if not line:
-                    break
-                stderr_lines.append(line)
-                if on_progress:
-                    m = _PROGRESS_RE.search(line)
-                    if m:
-                        progress: dict[str, object] = {
-                            "percent": float(m.group("percent")),
-                            "total_size": m.group("total"),
-                            "speed": m.group("speed"),
-                            "eta": m.group("eta"),
-                        }
-                        if m.group("frag_current"):
-                            progress["fragment"] = f"{m.group('frag_current')}/{m.group('frag_total')}"
-                        on_progress(progress)
+                for key, _ in events:
+                    line = key.fileobj.readline()
+                    if not line:
+                        sel.unregister(key.fileobj)
+                        open_streams -= 1
+                        continue
+                    if key.data == "stderr":
+                        stderr_lines.append(line)
+                        if on_progress:
+                            m = _PROGRESS_RE.search(line)
+                            if m:
+                                progress: dict[str, object] = {
+                                    "percent": float(m.group("percent")),
+                                    "total_size": m.group("total"),
+                                    "speed": m.group("speed"),
+                                    "eta": m.group("eta"),
+                                }
+                                if m.group("frag_current"):
+                                    progress["fragment"] = f"{m.group('frag_current')}/{m.group('frag_total')}"
+                                on_progress(progress)
+                    else:
+                        stdout_chunks.append(line)
             elif proc.poll() is not None:
-                # Process exited, drain remaining stderr
+                # Process exited, drain remaining output
+                for line in proc.stdout:
+                    stdout_chunks.append(line)
                 for line in proc.stderr:
                     stderr_lines.append(line)
                 break
 
         sel.close()
-        stdout = proc.stdout.read()
         proc.wait()
-        return stdout, "".join(stderr_lines), proc.returncode
+        return "".join(stdout_chunks), "".join(stderr_lines), proc.returncode
 
     @staticmethod
     def _merge_fragments(job_dir: Path) -> Path | None:
